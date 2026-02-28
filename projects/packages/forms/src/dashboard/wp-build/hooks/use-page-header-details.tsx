@@ -7,7 +7,7 @@ import { Breadcrumbs } from '@wordpress/admin-ui';
 import { DropdownMenu, Button } from '@wordpress/components';
 import { store as coreDataStore } from '@wordpress/core-data';
 import { useSelect } from '@wordpress/data';
-import { useMemo } from '@wordpress/element';
+import { useMemo, useState, useCallback } from '@wordpress/element';
 import { decodeEntities } from '@wordpress/html-entities';
 import { __, sprintf } from '@wordpress/i18n';
 import { moreVertical } from '@wordpress/icons';
@@ -23,6 +23,7 @@ import EmptyTrashButton from '../../components/empty-trash-button';
 import EmptyTrashConfirmationModal from '../../components/empty-trash-button/confirmation-modal';
 import ExportResponsesButton from '../../components/export-responses/button';
 import ExportResponsesModal from '../../components/export-responses/modal';
+import { FormNameModal } from '../../components/form-name-modal';
 import { getFormStatusLabel } from '../../constants';
 import useCreateForm from '../../hooks/use-create-form';
 import useEmptySpam from '../../hooks/use-empty-spam';
@@ -91,6 +92,17 @@ export default function usePageHeaderDetails(
 
 	// Hooks for mobile dropdown menu actions
 	const { openNewForm } = useCreateForm();
+	const [ isCreateFormModalOpen, setIsCreateFormModalOpen ] = useState( false );
+	const handleCreateFormClick = useCallback( () => {
+		setIsCreateFormModalOpen( true );
+	}, [] );
+	const closeCreateFormModal = useCallback( () => setIsCreateFormModalOpen( false ), [] );
+	const handleCreateFormSave = useCallback(
+		async ( formName: string ) => {
+			await openNewForm( { formTitle: formName } );
+		},
+		[ openNewForm ]
+	);
 	const {
 		showExportModal,
 		openModal: openExportModal,
@@ -250,7 +262,7 @@ export default function usePageHeaderDetails(
 				}
 
 				dropdownControls.push( {
-					onClick: () => openNewForm( {} ),
+					onClick: handleCreateFormClick,
 					title: __( 'Create a form', 'jetpack-forms' ),
 				} );
 			} else if ( isSingleFormScreen ) {
@@ -299,7 +311,7 @@ export default function usePageHeaderDetails(
 
 				if ( statusView === 'inbox' ) {
 					dropdownControls.push( {
-						onClick: () => openNewForm( { showPatterns: false } ),
+						onClick: handleCreateFormClick,
 						title: __( 'Create a form', 'jetpack-forms' ),
 					} );
 				}
@@ -340,6 +352,20 @@ export default function usePageHeaderDetails(
 					toggleProps={ { size: 'compact' } }
 				/>,
 				// Include modals when on mobile
+				...( isCreateFormModalOpen
+					? [
+							<FormNameModal
+								key="create-form-modal"
+								isOpen={ isCreateFormModalOpen }
+								onClose={ closeCreateFormModal }
+								onSave={ handleCreateFormSave }
+								title={ __( 'Create form', 'jetpack-forms' ) }
+								primaryButtonLabel={ __( 'Create', 'jetpack-forms' ) }
+								secondaryButtonLabel={ __( 'Cancel', 'jetpack-forms' ) }
+								placeholder={ __( 'Enter form name', 'jetpack-forms' ) }
+							/>,
+					  ]
+					: [] ),
 				...( showExportModal
 					? [
 							<ExportResponsesModal
@@ -383,7 +409,7 @@ export default function usePageHeaderDetails(
 				...( isIntegrationsEnabled && showDashboardIntegrations
 					? [ <ManageIntegrationsButton key="integrations" onClick={ onOpenIntegrations } /> ]
 					: [] ),
-				<CreateFormButton key="create" variant="primary" showIcon={ false } />,
+				<CreateFormButton key="create" variant="primary" showIcon={ false } showNameModal />,
 			];
 		}
 
@@ -425,6 +451,7 @@ export default function usePageHeaderDetails(
 							variant="secondary"
 							showPatterns={ false }
 							showIcon={ false }
+							showNameModal
 						/>,
 				  ]
 				: [] ),
@@ -446,7 +473,10 @@ export default function usePageHeaderDetails(
 		isSingleFormScreen,
 		formItemControls,
 		statusView,
-		openNewForm,
+		handleCreateFormClick,
+		isCreateFormModalOpen,
+		closeCreateFormModal,
+		handleCreateFormSave,
 		openExportModal,
 		showExportModal,
 		closeExportModal,
