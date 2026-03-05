@@ -2145,6 +2145,9 @@ importers:
       '@wordpress/element':
         specifier: 6.40.0
         version: 6.40.0
+      '@wordpress/i18n':
+        specifier: 6.13.0
+        version: 6.13.0
     devDependencies:
       '@automattic/jetpack-webpack-config':
         specifier: workspace:*
