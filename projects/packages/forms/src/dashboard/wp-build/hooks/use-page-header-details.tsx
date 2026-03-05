@@ -40,6 +40,7 @@ type UsePageHeaderDetailsProps = {
 	statusView?: ResponsesStatusView;
 	sourceId?: string | number;
 	formsCount?: number;
+	hasFormBlocks?: boolean;
 	isIntegrationsEnabled: boolean;
 	showDashboardIntegrations: boolean;
 	onOpenIntegrations: () => void;
@@ -69,6 +70,7 @@ export default function usePageHeaderDetails(
 		screen,
 		sourceId,
 		formsCount,
+		hasFormBlocks,
 		isIntegrationsEnabled,
 		showDashboardIntegrations,
 		onOpenIntegrations,
@@ -194,7 +196,7 @@ export default function usePageHeaderDetails(
 			const longMessage = __( 'View and manage all your forms in one place.', 'jetpack-forms' );
 
 			const shouldShowFormsHelpLink =
-				!! onOpenFormsHelp && typeof formsCount === 'number' && formsCount > 0 && formsCount < 5;
+				!! onOpenFormsHelp && !! hasFormBlocks && ( typeof formsCount !== 'number' || formsCount < 5 );
 
 			return shouldShowFormsHelpLink ? (
 				<>
@@ -220,7 +222,7 @@ export default function usePageHeaderDetails(
 		}
 
 		return __( 'View and manage all your form responses in one place.', 'jetpack-forms' );
-	}, [ formTitle, isFormsScreen, isSingleFormScreen, onOpenFormsHelp, formsCount ] );
+	}, [ formTitle, isFormsScreen, isSingleFormScreen, onOpenFormsHelp, formsCount, hasFormBlocks ] );
 
 	const actions = useMemo( () => {
 		// Mobile: show dropdown menu with actions

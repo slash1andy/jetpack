@@ -3,7 +3,9 @@
  */
 import { Page } from '@wordpress/admin-ui';
 import {
+	Button,
 	__experimentalConfirmDialog as ConfirmDialog, // eslint-disable-line @wordpress/no-unsafe-wp-apis
+	__experimentalHStack as HStack, // eslint-disable-line @wordpress/no-unsafe-wp-apis
 } from '@wordpress/components';
 import { store as coreStore } from '@wordpress/core-data';
 import { useDispatch, useSelect } from '@wordpress/data';
@@ -80,6 +82,7 @@ function StageInner() {
 	const { refreshIntegrations } = useDispatch( INTEGRATIONS_STORE );
 	const isIntegrationsEnabled = useConfigValue( 'isIntegrationsEnabled' );
 	const showDashboardIntegrations = useConfigValue( 'showDashboardIntegrations' );
+	const hasFormBlocks = useConfigValue( 'hasFormBlocks' );
 
 	const [ view, setView ] = useState< View >( () => ( {
 		...DEFAULT_VIEW,
@@ -495,6 +498,7 @@ function StageInner() {
 	} = usePageHeaderDetails( {
 		screen: 'forms',
 		formsCount: totalNonTrashForms ?? 0,
+		hasFormBlocks: !! hasFormBlocks,
 		isIntegrationsEnabled: !! isIntegrationsEnabled,
 		showDashboardIntegrations: !! showDashboardIntegrations,
 		onOpenIntegrations: openIntegrationsModal,
@@ -530,11 +534,28 @@ function StageInner() {
 							'jetpack-forms'
 						) }
 						actions={
-							<CreateFormButton
-								label={ __( 'Create a new form', 'jetpack-forms' ) }
-								variant="primary"
-								showIcon={ false }
-							/>
+							hasFormBlocks ? (
+								<HStack justify="center" spacing="2">
+									<CreateFormButton
+										label={ __( 'Create a new form', 'jetpack-forms' ) }
+										variant="primary"
+										showIcon={ false }
+									/>
+									<Button
+										size="compact"
+										variant="secondary"
+										onClick={ openFormsHelpModal }
+									>
+										{ __( 'Not seeing all your forms?', 'jetpack-forms' ) }
+									</Button>
+								</HStack>
+							) : (
+								<CreateFormButton
+									label={ __( 'Create a new form', 'jetpack-forms' ) }
+									variant="primary"
+									showIcon={ false }
+								/>
+							)
 						}
 					/>
 				}
