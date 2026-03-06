@@ -1,6 +1,7 @@
 /**
  * External dependencies
  */
+import { formatNumber } from '@automattic/number-formatters';
 import { Page } from '@wordpress/admin-ui';
 import {
 	__experimentalConfirmDialog as ConfirmDialog, // eslint-disable-line @wordpress/no-unsafe-wp-apis
@@ -25,8 +26,13 @@ import { FORM_POST_TYPE } from '../../src/blocks/shared/util/constants.js';
 import CreateFormButton from '../../src/dashboard/components/create-form-button/index.tsx';
 import { EmptyWrapper } from '../../src/dashboard/components/empty-responses/index.tsx';
 import { FormNameModal } from '../../src/dashboard/components/form-name-modal';
-import { NON_TRASH_FORM_STATUSES, getFormStatusLabel } from '../../src/dashboard/constants';
+import {
+	FORM_STATUSES,
+	NON_TRASH_FORM_STATUSES,
+	getFormStatusLabel,
+} from '../../src/dashboard/constants';
 import useDeleteForm from '../../src/dashboard/hooks/use-delete-form.ts';
+import useFormStatusCounts from '../../src/dashboard/hooks/use-form-status-counts.ts';
 import useFormsData from '../../src/dashboard/hooks/use-forms-data.ts';
 import WpRouteDashboardSearchParamsProvider from '../../src/dashboard/router/wp-route-dashboard-search-params-provider.tsx';
 import DataViewsHeaderRow from '../../src/dashboard/wp-build/components/dataviews-header-row';
@@ -112,8 +118,7 @@ function StageInner() {
 		return statusFilterValue === 'trash';
 	}, [ view.filters ] );
 
-	// Stable (non-trash) managed forms count, independent of the current DataViews search/filter state.
-	const { totalItems: totalNonTrashForms } = useFormsData( 1, 1, '', NON_TRASH_FORM_STATUSES );
+	const statusCounts = useFormStatusCounts();
 
 	const { records, isLoading, totalItems, totalPages } = useFormsData(
 		view.page ?? 1,
@@ -253,15 +258,15 @@ function StageInner() {
 				render: ( { item }: { item: FormListItem } ) => (
 					<Badge intent="draft">{ getFormStatusLabel( item.status ) }</Badge>
 				),
-				elements: [
-					{ label: __( 'All', 'jetpack-forms' ), value: 'all' },
-					{ label: __( 'Published', 'jetpack-forms' ), value: 'publish' },
-					{ label: __( 'Draft', 'jetpack-forms' ), value: 'draft' },
-					{ label: __( 'Pending review', 'jetpack-forms' ), value: 'pending' },
-					{ label: __( 'Scheduled', 'jetpack-forms' ), value: 'future' },
-					{ label: __( 'Private', 'jetpack-forms' ), value: 'private' },
-					{ label: __( 'Trash', 'jetpack-forms' ), value: 'trash' },
-				],
+				elements: FORM_STATUSES.map( value => ( {
+					value,
+					label: sprintf(
+						/* translators: 1: status name, 2: form count */
+						__( '%1$s (%2$s)', 'jetpack-forms' ),
+						getFormStatusLabel( value ),
+						formatNumber( statusCounts[ value ] )
+					),
+				} ) ),
 				filterBy: { operators: [ 'is' ] as Operator[], isPrimary: true },
 				enableSorting: false,
 			},
@@ -274,7 +279,7 @@ function StageInner() {
 				enableSorting: false,
 			},
 		],
-		[ dateSettings.formats.datetime ]
+		[ dateSettings.formats.datetime, statusCounts ]
 	);
 
 	const openSingleFormView = useCallback(
@@ -496,7 +501,7 @@ function StageInner() {
 		actions: headerActions,
 	} = usePageHeaderDetails( {
 		screen: 'forms',
-		formsCount: totalNonTrashForms ?? 0,
+		formsCount: statusCounts.all,
 		isIntegrationsEnabled: !! isIntegrationsEnabled,
 		showDashboardIntegrations: !! showDashboardIntegrations,
 		onOpenIntegrations: openIntegrationsModal,
