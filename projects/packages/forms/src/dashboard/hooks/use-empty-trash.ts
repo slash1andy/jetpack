@@ -16,7 +16,7 @@ import { store as dashboardStore } from '../store/index';
 import useInboxData from './use-inbox-data';
 
 type CoreStore = typeof coreStore & {
-	invalidateResolution: ( selector: string, args: unknown[] ) => void;
+	invalidateResolutionForStoreSelector: ( selector: string ) => void;
 };
 
 type UseEmptyTrashReturn = {
@@ -46,13 +46,13 @@ export default function useEmptyTrash( {
 	const [ isEmptying, setIsEmptying ] = useState( false );
 	const [ isEmpty, setIsEmpty ] = useState( true );
 	const { createSuccessNotice, createErrorNotice } = useDispatch( noticesStore );
-	const { invalidateResolution } = useDispatch( coreStore ) as unknown as CoreStore;
+	const { invalidateResolutionForStoreSelector } = useDispatch( coreStore ) as unknown as CoreStore;
 	const { invalidateCounts } = useDispatch( dashboardStore );
 
 	// Use props if provided, otherwise use hook
 	const hookData = useInboxData();
 	const totalItemsTrash = totalItemsTrashProp ?? hookData.totalItemsTrash ?? 0;
-	const { selectedResponsesCount, currentQuery } = hookData;
+	const { selectedResponsesCount } = hookData;
 
 	useEffect( () => {
 		setIsEmpty( ! totalItemsTrash );
@@ -101,26 +101,19 @@ export default function useEmptyTrash( {
 			} )
 			.finally( () => {
 				setIsEmptying( false );
-				// invalidate items list
-				invalidateResolution( 'getEntityRecords', [ 'postType', 'feedback', currentQuery ] );
-				// invalidate total items value
-				invalidateResolution( 'getEntityRecords', [
-					'postType',
-					'feedback',
-					{ ...currentQuery, per_page: 1, _fields: 'id' },
-				] );
-				// invalidate counts to refresh the counts across all status tabs
+				// Invalidate all entity record resolutions (feedback list, totals, and jetpack_form entries_count).
+				invalidateResolutionForStoreSelector( 'getEntityRecords' );
+				// Invalidate counts to refresh the counts across all status tabs.
 				invalidateCounts();
 			} );
 	}, [
 		closeConfirmDialog,
 		createErrorNotice,
 		createSuccessNotice,
-		invalidateResolution,
+		invalidateResolutionForStoreSelector,
 		invalidateCounts,
 		isEmpty,
 		isEmptying,
-		currentQuery,
 	] );
 
 	return {
