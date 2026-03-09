@@ -13,10 +13,11 @@ import { store as noticesStore } from '@wordpress/notices';
  * Internal dependencies
  */
 import { store as dashboardStore } from '../store/index';
+import { invalidateFormsDataResolutions } from './use-forms-data';
 import useInboxData from './use-inbox-data';
 
 type CoreStore = typeof coreStore & {
-	invalidateResolutionForStoreSelector: ( selector: string ) => void;
+	invalidateResolution: ( selector: string, args: unknown[] ) => void;
 };
 
 type UseEmptySpamReturn = {
@@ -46,13 +47,13 @@ export default function useEmptySpam( {
 	const [ isEmptying, setIsEmptying ] = useState( false );
 	const [ isEmpty, setIsEmpty ] = useState( true );
 	const { createSuccessNotice, createErrorNotice } = useDispatch( noticesStore );
-	const { invalidateResolutionForStoreSelector } = useDispatch( coreStore ) as unknown as CoreStore;
+	const { invalidateResolution } = useDispatch( coreStore ) as unknown as CoreStore;
 	const { invalidateCounts } = useDispatch( dashboardStore );
 
 	// Use props if provided, otherwise use hook
 	const hookData = useInboxData();
 	const totalItemsSpam = totalItemsSpamProp ?? hookData.totalItemsSpam ?? 0;
-	const { selectedResponsesCount } = hookData;
+	const { selectedResponsesCount, currentQuery } = hookData;
 
 	useEffect( () => {
 		setIsEmpty( ! totalItemsSpam );
@@ -101,19 +102,28 @@ export default function useEmptySpam( {
 			} )
 			.finally( () => {
 				setIsEmptying( false );
-				// Invalidate all entity record resolutions (feedback list, totals, and jetpack_form entries_count).
-				invalidateResolutionForStoreSelector( 'getEntityRecords' );
-				// Invalidate counts to refresh the counts across all status tabs.
+				// invalidate items list
+				invalidateResolution( 'getEntityRecords', [ 'postType', 'feedback', currentQuery ] );
+				// invalidate total items value
+				invalidateResolution( 'getEntityRecords', [
+					'postType',
+					'feedback',
+					{ ...currentQuery, per_page: 1, _fields: 'id' },
+				] );
+				// invalidate counts to refresh the counts across all status tabs
 				invalidateCounts();
+				// invalidate jetpack_form records so entries_count is refreshed on the Forms list
+				invalidateFormsDataResolutions( invalidateResolution );
 			} );
 	}, [
 		closeConfirmDialog,
 		createErrorNotice,
 		createSuccessNotice,
-		invalidateResolutionForStoreSelector,
+		invalidateResolution,
 		invalidateCounts,
 		isEmpty,
 		isEmptying,
+		currentQuery,
 	] );
 
 	return {

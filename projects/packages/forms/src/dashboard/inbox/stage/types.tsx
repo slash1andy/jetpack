@@ -63,7 +63,6 @@ export type DispatchActions = {
 		invalidateCache?: boolean
 	) => void;
 	invalidateResolution: ( selector: string, args: unknown[] ) => void;
-	invalidateResolutionForStoreSelector: ( selector: string ) => void;
 
 	// Dashboard store actions
 	updateCountsOptimistically: (

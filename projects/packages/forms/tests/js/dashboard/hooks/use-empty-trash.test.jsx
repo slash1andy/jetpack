@@ -15,6 +15,7 @@ await jest.unstable_mockModule( '@wordpress/notices', () => ( {
 
 await jest.unstable_mockModule( '@wordpress/core-data', () => ( {
 	store: 'core',
+	useEntityRecords: jest.fn( () => ( { records: [], hasResolved: true } ) ),
 } ) );
 
 await jest.unstable_mockModule( '@automattic/jetpack-analytics', () => ( {
@@ -43,7 +44,7 @@ await jest.unstable_mockModule( '@wordpress/data', () => {
 	const mockDispatch = {
 		createSuccessNotice: jest.fn(),
 		createErrorNotice: jest.fn(),
-		invalidateResolutionForStoreSelector: jest.fn(),
+		invalidateResolution: jest.fn(),
 		invalidateCounts: jest.fn(),
 	};
 
@@ -56,9 +57,7 @@ await jest.unstable_mockModule( '@wordpress/data', () => {
 				};
 			}
 			if ( store === 'core' ) {
-				return {
-					invalidateResolutionForStoreSelector: mockDispatch.invalidateResolutionForStoreSelector,
-				};
+				return { invalidateResolution: mockDispatch.invalidateResolution };
 			}
 			if ( store === 'dashboard' ) {
 				return { invalidateCounts: mockDispatch.invalidateCounts };

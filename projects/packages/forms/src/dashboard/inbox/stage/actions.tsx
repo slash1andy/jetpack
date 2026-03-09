@@ -11,6 +11,7 @@ import { store as noticesStore } from '@wordpress/notices';
 /**
  * Internal dependencies
  */
+import { invalidateFormsDataResolutions } from '../../hooks/use-forms-data.ts';
 import { notSpam, spam } from '../../icons/index.ts';
 import { store as dashboardStore } from '../../store/index.js';
 import { updateMenuCounter, updateMenuCounterOptimistically, withTimeout } from '../utils.js';
@@ -72,7 +73,7 @@ const invalidateCacheAndNavigate = (
 	registry.dispatch( dashboardStore ).invalidateCounts();
 
 	// Invalidate jetpack_form entity records so the entries_count on the Forms list is refreshed.
-	registry.dispatch( coreStore ).invalidateResolutionForStoreSelector( 'getEntityRecords' );
+	invalidateFormsDataResolutions( registry.dispatch( coreStore ).invalidateResolution );
 
 	// Navigate to correct page if current page will be invalid
 	const { getTrashCount, getSpamCount, getInboxCount } = registry.select( dashboardStore );

@@ -1,6 +1,29 @@
 import { useEntityRecords } from '@wordpress/core-data';
-import { useMemo } from '@wordpress/element';
+import { useEffect, useMemo } from '@wordpress/element';
 import { decodeEntities } from '@wordpress/html-entities';
+
+/**
+ * Tracks all jetpack_form queries that have been used, so we can
+ * selectively invalidate only their core-data resolutions.
+ */
+const formsQueryCache = new Set< string >();
+
+/**
+ * Invalidate all cached jetpack_form entity record resolutions.
+ *
+ * Call this after changing response status (trash, spam, restore, delete)
+ * so the Forms list entries_count is refreshed.
+ *
+ * @param invalidateResolution - The core store's invalidateResolution dispatch.
+ */
+export function invalidateFormsDataResolutions(
+	invalidateResolution: ( selector: string, args: unknown[] ) => void
+): void {
+	for ( const queryStr of formsQueryCache ) {
+		const query = JSON.parse( queryStr );
+		invalidateResolution( 'getEntityRecords', [ 'postType', 'jetpack_form', query ] );
+	}
+}
 
 export type FormListItem = {
 	id: number;
@@ -74,6 +97,10 @@ export default function useFormsData(
 	const query = useMemo( () => {
 		return getFormsListQuery( page, perPage, search, status );
 	}, [ page, perPage, search, status ] );
+
+	useEffect( () => {
+		formsQueryCache.add( JSON.stringify( query ) );
+	}, [ query ] );
 
 	const {
 		records: rawRecords,
