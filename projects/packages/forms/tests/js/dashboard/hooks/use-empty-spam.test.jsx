@@ -152,6 +152,13 @@ describe( 'useEmptySpam', () => {
 				{ type: 'snackbar', id: 'empty-spam' }
 			);
 		} );
+
+		// Verify cache invalidation
+		const coreDispatch = useDispatch( 'core' );
+		expect( coreDispatch.invalidateResolution ).toHaveBeenCalled();
+
+		const dashboardDispatch = useDispatch( 'dashboard' );
+		expect( dashboardDispatch.invalidateCounts ).toHaveBeenCalled();
 	} );
 
 	it( 'does not call API when isEmpty is true', async () => {
