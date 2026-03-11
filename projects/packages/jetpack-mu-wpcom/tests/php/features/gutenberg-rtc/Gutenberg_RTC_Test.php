@@ -21,12 +21,16 @@ use PHPUnit\Framework\Attributes\CoversFunction;
  * @covers ::wpcom_get_gutenberg_rtc_providers
  * @covers ::wpcom_is_gutenberg_rtc_enabled
  * @covers ::wpcom_unregister_rtc_setting
+ * @covers ::wpcom_rtc_get_max_collaborators
+ * @covers ::wpcom_rtc_limit_collaborators
  */
 #[CoversFunction( 'wpcom_is_gutenberg_rtc_enabled' )]
 #[CoversFunction( 'wpcom_get_gutenberg_rtc_providers' )]
 #[CoversFunction( 'wpcom_enqueue_gutenberg_rtc_assets' )]
 #[CoversFunction( 'wpcom_unregister_rtc_setting' )]
 #[CoversFunction( 'wpcom_disable_rtc_option' )]
+#[CoversFunction( 'wpcom_rtc_get_max_collaborators' )]
+#[CoversFunction( 'wpcom_rtc_limit_collaborators' )]
 class Gutenberg_RTC_Test extends \WorDBless\BaseTestCase {
 
 	/**
@@ -71,6 +75,7 @@ class Gutenberg_RTC_Test extends \WorDBless\BaseTestCase {
 		$wp_styles          = $this->original_wp_styles; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
 		remove_all_filters( 'wpcom_is_gutenberg_rtc_enabled' );
 		remove_all_filters( 'wpcom_gutenberg_rtc_providers' );
+		remove_all_filters( 'wpcom_rtc_max_collaborators' );
 		parent::tear_down();
 	}
 
@@ -400,5 +405,81 @@ class Gutenberg_RTC_Test extends \WorDBless\BaseTestCase {
 		$inline = $this->get_inline_script();
 
 		$this->assertStringContainsString( '"providers":[]', $inline );
+	}
+
+	/**
+	 * Tests that the collaborator limit filter is hooked.
+	 */
+	public function test_wpcom_rtc_limit_collaborators_hooked() {
+		$this->assertSame( 10, has_filter( 'rest_pre_dispatch', 'wpcom_rtc_limit_collaborators' ) );
+	}
+
+	/**
+	 * Tests that the default max collaborators is 0 (unlimited).
+	 */
+	public function test_wpcom_rtc_get_max_collaborators_default() {
+		$this->assertSame( 0, wpcom_rtc_get_max_collaborators() );
+	}
+
+	/**
+	 * Tests that max collaborators can be set via filter.
+	 */
+	public function test_wpcom_rtc_get_max_collaborators_via_filter() {
+		add_filter(
+			'wpcom_rtc_max_collaborators',
+			function () {
+				return 2;
+			}
+		);
+
+		$this->assertSame( 2, wpcom_rtc_get_max_collaborators() );
+	}
+
+	/**
+	 * Tests that the limit is skipped when HTTP polling is not enforced (e.g. PingHub sites).
+	 */
+	public function test_wpcom_rtc_limit_collaborators_skips_non_http_polling_sites() {
+		add_filter(
+			'wpcom_rtc_max_collaborators',
+			function () {
+				return 1;
+			}
+		);
+
+		$request = new WP_REST_Request( 'POST', '/wp-sync/v1/updates' );
+		$request->set_body_params(
+			array(
+				'rooms' => array(
+					array(
+						'room'      => 'postType/post:1',
+						'client_id' => 100,
+					),
+				),
+			)
+		);
+
+		// should_enforce_http_polling_for_blog() returns false in test env (no IS_ATOMIC).
+		$result = wpcom_rtc_limit_collaborators( null, new WP_REST_Server(), $request );
+		$this->assertNull( $result );
+	}
+
+	/**
+	 * Tests that the limit is not enforced for non-sync routes.
+	 */
+	public function test_wpcom_rtc_limit_collaborators_ignores_other_routes() {
+		$request = new WP_REST_Request( 'GET', '/wp/v2/posts' );
+		$result  = wpcom_rtc_limit_collaborators( null, new WP_REST_Server(), $request );
+		$this->assertNull( $result );
+	}
+
+	/**
+	 * Tests that already-resolved results are passed through.
+	 */
+	public function test_wpcom_rtc_limit_collaborators_passes_through_existing_result() {
+		$existing = new WP_REST_Response( array( 'ok' => true ) );
+		$request  = new WP_REST_Request( 'POST', '/wp-sync/v1/updates' );
+
+		$result = wpcom_rtc_limit_collaborators( $existing, new WP_REST_Server(), $request );
+		$this->assertSame( $existing, $result );
 	}
 }

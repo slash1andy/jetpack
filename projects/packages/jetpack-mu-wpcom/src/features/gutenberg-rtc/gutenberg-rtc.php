@@ -125,3 +125,88 @@ function wpcom_disable_rtc_option( $pre_option ) {
 }
 add_filter( 'pre_option_wp_enable_real_time_collaboration', 'wpcom_disable_rtc_option' );
 add_filter( 'pre_option_enable_real_time_collaboration', 'wpcom_disable_rtc_option' ); // TODO: Clean up the old name. See https://github.com/WordPress/gutenberg/pull/75837.
+
+/**
+ * Get the maximum number of simultaneous RTC collaborators allowed per room.
+ *
+ * @return int Maximum collaborator count. 0 means unlimited.
+ */
+function wpcom_rtc_get_max_collaborators() {
+	return (int) apply_filters( 'wpcom_rtc_max_collaborators', 0 );
+}
+
+/**
+ * Limit the number of simultaneous RTC collaborators per room.
+ *
+ * Hooks into `rest_pre_dispatch` to check the current awareness state before
+ * allowing a new client to join a sync room. If the number of active
+ * collaborators (excluding the requesting client) meets or exceeds the limit,
+ * a 429 error is returned.
+ *
+ * @param mixed           $result  Response to replace the requested version with. Can be anything
+ *                                 a normal endpoint can return, or null to not hijack the request.
+ * @param WP_REST_Server  $server  Server instance.
+ * @param WP_REST_Request $request Request used to generate the response.
+ * @return mixed|WP_Error Original result or WP_Error if limit exceeded.
+ */
+function wpcom_rtc_limit_collaborators( $result, $server, $request ) {
+	if ( null !== $result ) {
+		return $result;
+	}
+
+	$route = $request->get_route();
+	if ( '/wp-sync/v1/updates' !== $route ) {
+		return $result;
+	}
+
+	// Only enforce for HTTP polling ramp-up sites; PingHub handles its own limits.
+	if ( ! should_enforce_http_polling_for_blog() ) {
+		return $result;
+	}
+
+	$max_collaborators = wpcom_rtc_get_max_collaborators();
+	if ( $max_collaborators <= 0 ) {
+		return $result;
+	}
+
+	if ( ! class_exists( 'WP_Sync_Post_Meta_Storage' ) ) {
+		return $result;
+	}
+
+	$rooms = $request['rooms'];
+	if ( ! is_array( $rooms ) ) {
+		return $result;
+	}
+
+	$storage = new WP_Sync_Post_Meta_Storage();
+	$now     = time();
+
+	foreach ( $rooms as $room_request ) {
+		$room      = $room_request['room'] ?? '';
+		$client_id = $room_request['client_id'] ?? 0;
+
+		$existing = $storage->get_awareness_state( $room );
+		$active   = array_filter(
+			$existing,
+			function ( $entry ) use ( $client_id, $now ) {
+				// Exclude the current client (reconnection case).
+				if ( $entry['client_id'] === $client_id ) {
+					return false;
+				}
+				// Only count clients within the awareness timeout (30s).
+				return ( $now - $entry['updated_at'] ) < 30;
+			}
+		);
+
+		if ( count( $active ) >= $max_collaborators ) {
+			return new WP_Error(
+				'rest_sync_connection_limit_exceeded',
+				__( 'Too many editors connected.', 'jetpack-mu-wpcom' ),
+				array( 'status' => 429 )
+			);
+		}
+	}
+
+	return $result;
+}
+add_filter( 'rest_pre_dispatch', 'wpcom_rtc_limit_collaborators', 10, 3 );
