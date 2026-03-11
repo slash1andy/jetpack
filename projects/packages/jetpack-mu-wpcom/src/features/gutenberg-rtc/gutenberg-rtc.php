@@ -178,14 +178,14 @@ function wpcom_rtc_limit_collaborators( $result, $server, $request ) {
 		return $result;
 	}
 
-	$storage = new WP_Sync_Post_Meta_Storage();
+	$storage = new WP_Sync_Post_Meta_Storage(); // @phan-suppress-current-line PhanUndeclaredClassMethod -- Guarded by class_exists() above.
 	$now     = time();
 
 	foreach ( $rooms as $room_request ) {
 		$room      = $room_request['room'] ?? '';
 		$client_id = $room_request['client_id'] ?? 0;
 
-		$existing = $storage->get_awareness_state( $room );
+		$existing = $storage->get_awareness_state( $room ); // @phan-suppress-current-line PhanUndeclaredClassMethod
 		$active   = array_filter(
 			$existing,
 			function ( $entry ) use ( $client_id, $now ) {
