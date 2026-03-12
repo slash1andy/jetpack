@@ -143,7 +143,7 @@ class Jetpack_Subscriptions_Test extends WP_UnitTestCase {
 	 */
 	public function test_newsletter_send_default_true_sends_email() {
 		update_option( 'wpcom_newsletter_send_default', 1 );
-		$this->assertFalse( (bool) ( ! get_option( 'wpcom_newsletter_send_default', true ) ) );
+		$this->assertFalse( ! get_option( 'wpcom_newsletter_send_default', true ) );
 		delete_option( 'wpcom_newsletter_send_default' );
 	}
 
@@ -152,7 +152,7 @@ class Jetpack_Subscriptions_Test extends WP_UnitTestCase {
 	 */
 	public function test_newsletter_send_default_false_skips_email() {
 		update_option( 'wpcom_newsletter_send_default', 0 );
-		$this->assertTrue( (bool) ( ! get_option( 'wpcom_newsletter_send_default', true ) ) );
+		$this->assertTrue( ! get_option( 'wpcom_newsletter_send_default', true ) );
 		delete_option( 'wpcom_newsletter_send_default' );
 	}
 
@@ -161,7 +161,7 @@ class Jetpack_Subscriptions_Test extends WP_UnitTestCase {
 	 */
 	public function test_newsletter_send_default_missing_sends_email() {
 		delete_option( 'wpcom_newsletter_send_default' );
-		$this->assertFalse( (bool) ( ! get_option( 'wpcom_newsletter_send_default', true ) ) );
+		$this->assertFalse( ! get_option( 'wpcom_newsletter_send_default', true ) );
 	}
 
 	/**
