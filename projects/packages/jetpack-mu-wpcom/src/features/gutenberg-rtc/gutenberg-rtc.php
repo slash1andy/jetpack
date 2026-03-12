@@ -76,7 +76,7 @@ function wpcom_enqueue_gutenberg_rtc_assets() {
 	$data = wp_json_encode(
 		array(
 			'providers'     => wpcom_get_gutenberg_rtc_providers(),
-			'roomUserLimit' => 2,
+			'roomUserLimit' => wpcom_rtc_get_max_collaborators(),
 		),
 		JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP
 	);
@@ -132,7 +132,7 @@ add_filter( 'pre_option_enable_real_time_collaboration', 'wpcom_disable_rtc_opti
  * @return int Maximum collaborator count. 0 means unlimited.
  */
 function wpcom_rtc_get_max_collaborators() {
-	return (int) apply_filters( 'wpcom_rtc_max_collaborators', 0 );
+	return (int) apply_filters( 'wpcom_rtc_max_collaborators', 2 );
 }
 
 /**
