@@ -11,7 +11,7 @@ import { store as noticesStore } from '@wordpress/notices';
 /**
  * Internal dependencies
  */
-import { invalidateFormsDataResolutions } from '../../hooks/use-forms-data.ts';
+import { invalidateFormsDataResolutions } from '../../hooks/forms-data-cache.ts';
 import { notSpam, spam } from '../../icons/index.ts';
 import { store as dashboardStore } from '../../store/index.js';
 import { updateMenuCounter, updateMenuCounterOptimistically, withTimeout } from '../utils.js';

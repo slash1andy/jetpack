@@ -15,7 +15,6 @@ await jest.unstable_mockModule( '@wordpress/notices', () => ( {
 
 await jest.unstable_mockModule( '@wordpress/core-data', () => ( {
 	store: 'core',
-	useEntityRecords: jest.fn( () => ( { records: [], hasResolved: true } ) ),
 } ) );
 
 await jest.unstable_mockModule( '@automattic/jetpack-analytics', () => ( {

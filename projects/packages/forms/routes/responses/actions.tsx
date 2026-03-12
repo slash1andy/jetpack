@@ -13,7 +13,7 @@ import * as React from 'react';
 /**
  * Internal dependencies
  */
-import { invalidateFormsDataResolutions } from '../../src/dashboard/hooks/use-forms-data.ts';
+import { invalidateFormsDataResolutions } from '../../src/dashboard/hooks/forms-data-cache.ts';
 import { notSpam, spam } from '../../src/dashboard/icons';
 import { defaultView } from '../../src/dashboard/inbox/stage/views.js';
 import {

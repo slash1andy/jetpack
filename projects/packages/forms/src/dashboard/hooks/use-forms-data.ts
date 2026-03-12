@@ -1,29 +1,10 @@
 import { useEntityRecords } from '@wordpress/core-data';
-import { useEffect, useMemo } from '@wordpress/element';
+import { useMemo } from '@wordpress/element';
 import { decodeEntities } from '@wordpress/html-entities';
+import { getFormsListQuery, registerFormsQuery } from './forms-data-cache';
 
-/**
- * Tracks all jetpack_form queries that have been used, so we can
- * selectively invalidate only their core-data resolutions.
- */
-const formsQueryCache = new Set< string >();
-
-/**
- * Invalidate all cached jetpack_form entity record resolutions.
- *
- * Call this after changing response status (trash, spam, restore, delete)
- * so the Forms list entries_count is refreshed.
- *
- * @param invalidateResolution - The core store's invalidateResolution dispatch.
- */
-export function invalidateFormsDataResolutions(
-	invalidateResolution: ( selector: string, args: unknown[] ) => void
-): void {
-	for ( const queryStr of formsQueryCache ) {
-		const query = JSON.parse( queryStr );
-		invalidateResolution( 'getEntityRecords', [ 'postType', 'jetpack_form', query ] );
-	}
-}
+// Re-export for consumers
+export { invalidateFormsDataResolutions, getFormsListQuery } from './forms-data-cache';
 
 export type FormListItem = {
 	id: number;
@@ -33,34 +14,6 @@ export type FormListItem = {
 	entriesCount: number;
 	editUrl?: string;
 };
-
-/**
- * Build the query object for fetching Forms list records from core-data.
- *
- * @param page    - Current page number.
- * @param perPage - Items per page.
- * @param search  - Search term.
- * @param status  - REST `status` query param (comma-separated list or single status).
- *
- * @return Query params for useEntityRecords / core-data.
- */
-export function getFormsListQuery( page: number, perPage: number, search: string, status: string ) {
-	const queryParams: Record< string, unknown > = {
-		context: 'edit',
-		jetpack_forms_context: 'dashboard',
-		order: 'desc',
-		orderby: 'modified',
-		page,
-		per_page: perPage,
-		status,
-	};
-
-	if ( search ) {
-		queryParams.search = search;
-	}
-
-	return queryParams;
-}
 
 type JetpackFormRestItem = {
 	id: number;
@@ -98,9 +51,8 @@ export default function useFormsData(
 		return getFormsListQuery( page, perPage, search, status );
 	}, [ page, perPage, search, status ] );
 
-	useEffect( () => {
-		formsQueryCache.add( JSON.stringify( query ) );
-	}, [ query ] );
+	// Register synchronously so the query is in the cache before any status change action fires.
+	registerFormsQuery( query );
 
 	const {
 		records: rawRecords,

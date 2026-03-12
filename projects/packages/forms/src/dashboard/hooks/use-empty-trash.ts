@@ -13,7 +13,7 @@ import { store as noticesStore } from '@wordpress/notices';
  * Internal dependencies
  */
 import { store as dashboardStore } from '../store/index';
-import { invalidateFormsDataResolutions } from './use-forms-data';
+import { invalidateFormsDataResolutions } from './forms-data-cache';
 import useInboxData from './use-inbox-data';
 
 type CoreStore = typeof coreStore & {
