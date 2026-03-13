@@ -93,11 +93,202 @@ class PayPal_Payment_Buttons {
 	/**
 	 * Render the block.
 	 *
+	 * Supports both API-managed buttons (V2) and legacy paste-code buttons (V1).
+	 * API-managed buttons use the payment_url from the PayPal Pay Links & Buttons API.
+	 * Legacy buttons use scriptSrc/hostedButtonId from the paste-code workflow.
+	 *
 	 * @param array  $attributes The block attributes.
 	 * @param string $content The block content.
-	 * @return string|void
+	 * @return string|void The rendered block HTML.
 	 */
 	public static function render_block( $attributes, $content ) { // phpcs:ignore VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable
+		$api_managed = ! empty( $attributes['isApiManaged'] );
+
+		// ─── V2: API-managed button ───
+		if ( $api_managed ) {
+			return self::render_api_managed_button( $attributes );
+		}
+
+		// ─── V1: Legacy paste-code button ───
+		return self::render_legacy_button( $attributes );
+	}
+
+	/**
+	 * Render an API-managed button created via the Pay Links & Buttons API.
+	 *
+	 * Generates a styled form that links to the PayPal payment page.
+	 * The BN code is included as a query parameter for revenue attribution.
+	 *
+	 * @since 0.7.0
+	 *
+	 * @param array $attributes The block attributes.
+	 * @return string|void The rendered button HTML.
+	 */
+	/**
+	 * Currency symbols for frontend price formatting.
+	 * Matches the JS CURRENCY_SYMBOLS map in paypal-button-preview.js.
+	 *
+	 * @var array
+	 */
+	private static $currency_symbols = array(
+		'USD' => '$',
+		'EUR' => '€',
+		'GBP' => '£',
+		'JPY' => '¥',
+		'CAD' => 'CA$',
+		'AUD' => 'A$',
+		'CHF' => 'CHF',
+		'CNY' => '¥',
+		'INR' => '₹',
+		'BRL' => 'R$',
+		'MXN' => 'MX$',
+		'HKD' => 'HK$',
+		'NZD' => 'NZ$',
+		'SGD' => 'S$',
+		'SEK' => 'kr',
+		'NOK' => 'kr',
+		'DKK' => 'kr',
+		'PLN' => 'zł',
+		'CZK' => 'Kč',
+		'HUF' => 'Ft',
+		'ILS' => '₪',
+		'MYR' => 'RM',
+		'PHP' => '₱',
+		'TWD' => 'NT$',
+		'THB' => '฿',
+		'RUB' => '₽',
+	);
+
+	/**
+	 * Format a price with its currency symbol.
+	 *
+	 * @param string $price    The price value.
+	 * @param string $currency The ISO currency code.
+	 * @return string Formatted price string (e.g., "$29.99").
+	 */
+	private static function format_price( $price, $currency ) {
+		$symbol = isset( self::$currency_symbols[ $currency ] ) ? self::$currency_symbols[ $currency ] : $currency;
+		return $symbol . $price;
+	}
+
+	/**
+	 * PayPal logo SVG markup for frontend button rendering.
+	 * Matches the inline SVG from paypal-button-preview.js.
+	 *
+	 * @return string SVG markup.
+	 */
+	private static function get_paypal_logo_svg() {
+		return '<svg class="jetpack-paypal-button__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 101 32" width="80" height="20" aria-label="PayPal">'
+			. '<path d="M12.5 4.7h-7c-.5 0-.9.3-1 .8L1.6 25c0 .3.2.6.6.6h3.3c.5 0 .9-.3 1-.8l.8-5.4c0-.5.5-.8 1-.8h2.3c4.7 0 7.4-2.3 8.1-6.8.3-2 0-3.5-.9-4.6C16.7 5.5 14.9 4.7 12.5 4.7zm.8 6.7c-.4 2.6-2.3 2.6-4.2 2.6h-1l.8-4.8c0-.3.3-.5.6-.5h.5c1.3 0 2.5 0 3.1.7.4.5.5 1.2.2 2z" fill="#253B80"/>'
+			. '<path d="M35.2 11.3h-3.3c-.3 0-.5.2-.6.5l-.1.9-.2-.3c-.7-1-2.2-1.3-3.7-1.3-3.5 0-6.4 2.6-7 6.3-.3 1.8.1 3.6 1.2 4.8 1 1.1 2.4 1.6 4.1 1.6 2.9 0 4.5-1.9 4.5-1.9l-.1.9c0 .3.2.6.6.6h3c.5 0 .9-.3 1-.8l1.8-11.5c-.1-.4-.4-.8-.7-.8zm-4.5 6.1c-.3 1.8-1.8 3-3.6 3-.9 0-1.6-.3-2.1-.8-.4-.5-.6-1.3-.5-2.1.3-1.8 1.8-3 3.6-3 .9 0 1.6.3 2.1.8.4.6.6 1.3.5 2.1z" fill="#253B80"/>'
+			. '<path d="M55.1 11.3h-3.4c-.3 0-.6.2-.8.4l-4.5 6.6-1.9-6.4c-.1-.4-.5-.6-.9-.6h-3.3c-.4 0-.7.4-.5.7l3.6 10.5-3.4 4.8c-.3.4 0 .9.4.9h3.3c.3 0 .6-.1.8-.4l10.9-15.7c.3-.4 0-.8-.3-.8z" fill="#253B80"/>'
+			. '<path d="M67.4 4.7h-7c-.5 0-.9.3-1 .8L56.5 25c0 .3.2.6.6.6h3.5c.3 0 .6-.2.7-.6l.8-5.2c0-.5.5-.8 1-.8h2.3c4.7 0 7.4-2.3 8.1-6.8.3-2 0-3.5-.9-4.6-1.1-1.2-2.9-1.9-5.2-1.9zm.8 6.7c-.4 2.6-2.3 2.6-4.2 2.6h-1l.8-4.8c0-.3.3-.5.6-.5h.5c1.3 0 2.5 0 3.1.7.3.5.4 1.2.2 2z" fill="#179BD7"/>'
+			. '<path d="M90.1 11.3h-3.3c-.3 0-.5.2-.6.5l-.1.9-.2-.3c-.7-1-2.2-1.3-3.7-1.3-3.5 0-6.4 2.6-7 6.3-.3 1.8.1 3.6 1.2 4.8 1 1.1 2.4 1.6 4.1 1.6 2.9 0 4.5-1.9 4.5-1.9l-.1.9c0 .3.2.6.6.6h3c.5 0 .9-.3 1-.8l1.8-11.5c-.1-.4-.3-.8-.7-.8zm-4.5 6.1c-.3 1.8-1.8 3-3.6 3-.9 0-1.6-.3-2.1-.8-.4-.5-.6-1.3-.5-2.1.3-1.8 1.8-3 3.6-3 .9 0 1.6.3 2.1.8.4.6.5 1.3.5 2.1z" fill="#179BD7"/>'
+			. '<path d="M95.1 5.2l-3 19.9c0 .3.2.6.6.6h2.9c.5 0 .9-.3 1-.8L99.5 5.5c0-.3-.2-.6-.6-.6h-3.2c-.2 0-.5.1-.6.3z" fill="#179BD7"/>'
+			. '</svg>';
+	}
+
+	/**
+	 * Render an API-managed PayPal payment button on the frontend.
+	 *
+	 * @param array $attributes The block attributes.
+	 * @return string|void The rendered button HTML.
+	 */
+	private static function render_api_managed_button( $attributes ) {
+		$resource_id         = $attributes['resourceId'] ?? '';
+		$payment_url         = $attributes['paymentLink'] ?? '';
+		$product_name        = $attributes['productName'] ?? '';
+		$price               = $attributes['price'] ?? '';
+		$currency            = $attributes['currencyCode'] ?? 'USD';
+		$button_text         = $attributes['buttonText'] ?? __( 'Pay Now', 'jetpack-paypal-payments' );
+		$button_type         = $attributes['buttonType'] ?? 'stacked';
+		$product_description = $attributes['productDescription'] ?? '';
+
+		if ( empty( $resource_id ) || empty( $payment_url ) ) {
+			return;
+		}
+
+		// Validate the payment URL is from a legitimate PayPal domain.
+		$sanitized_payment_url = self::sanitize_paypal_script_url( $payment_url );
+		if ( false === $sanitized_payment_url ) {
+			return;
+		}
+
+		self::register_hooks();
+
+		// Append BN code for revenue attribution tracking.
+		$action_url = esc_url(
+			add_query_arg( 'at_code', self::PAYPAL_PARTNER_ATTRIBUTION_ID, $sanitized_payment_url )
+		);
+
+		$is_stacked = 'stacked' === $button_type;
+
+		// Build product info section.
+		$description_html = '';
+		if ( ! empty( $product_description ) ) {
+			$description_html = sprintf(
+				'<span class="jetpack-paypal-button__product-description">%s</span>',
+				esc_html( $product_description )
+			);
+		}
+
+		$price_html = '';
+		if ( ! empty( $price ) ) {
+			$price_html = sprintf(
+				'<span class="jetpack-paypal-button__product-price">%s</span>',
+				esc_html( self::format_price( $price, $currency ) )
+			);
+		}
+
+		// Build debit/credit secondary button (stacked layout only).
+		$debit_button_html = '';
+		if ( $is_stacked ) {
+			$debit_button_html = sprintf(
+				'<a href="%s" class="jetpack-paypal-button__debit-link" target="_blank" rel="noopener noreferrer">%s</a>',
+				$action_url,
+				esc_html__( 'Debit or Credit Card', 'jetpack-paypal-payments' )
+			);
+		}
+
+		$paypal_logo = self::get_paypal_logo_svg();
+
+		return sprintf(
+			'<div class="wp-block-jetpack-paypal-payment-buttons">
+	<div class="jetpack-paypal-button">
+		<div class="jetpack-paypal-button__product">
+			<div class="jetpack-paypal-button__product-info">
+				<span class="jetpack-paypal-button__product-name">%1$s</span>
+				%2$s
+			</div>
+			%3$s
+		</div>
+		<div class="jetpack-paypal-button__buttons jetpack-paypal-button__buttons--%4$s">
+			<a href="%5$s" class="jetpack-paypal-button__paypal-link" target="_blank" rel="noopener noreferrer">
+				%6$s
+				<span class="jetpack-paypal-button__button-text">%7$s</span>
+			</a>
+			%8$s
+		</div>
+	</div>
+</div>',
+			esc_html( $product_name ),
+			$description_html,
+			$price_html,
+			esc_attr( $button_type ),
+			$action_url,
+			$paypal_logo,
+			esc_html( $button_text ),
+			$debit_button_html
+		);
+	}
+
+	/**
+	 * Render a legacy paste-code button (V1 backward compatibility).
+	 *
+	 * @param array $attributes The block attributes.
+	 * @return string|void The rendered button HTML.
+	 */
+	private static function render_legacy_button( $attributes ) {
 		$button_type      = $attributes['buttonType'] ?? '';
 		$script_src       = $attributes['scriptSrc'] ?? '';
 		$hosted_button_id = $attributes['hostedButtonId'] ?? '';
@@ -244,5 +435,18 @@ class PayPal_Payment_Buttons {
 	 */
 	public static function register_hooks() {
 		add_filter( 'safe_style_css', array( __CLASS__, 'add_style_display' ) );
+	}
+
+	/**
+	 * Initialize PayPal Payment Buttons API integration hooks.
+	 *
+	 * Registers REST API routes for PayPal OAuth connection management
+	 * and button CRUD operations.
+	 *
+	 * @since 0.7.0
+	 * @return void
+	 */
+	public static function init_api() {
+		add_action( 'rest_api_init', array( PayPal_REST_Controller::class, 'register_routes' ) );
 	}
 }
