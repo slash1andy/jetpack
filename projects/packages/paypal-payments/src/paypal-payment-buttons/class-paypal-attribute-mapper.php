@@ -62,7 +62,6 @@ class PayPal_Attribute_Mapper {
 		'TWD',
 		'THB',
 		'INR',
-		'RUB',
 	);
 
 	/**
@@ -109,8 +108,72 @@ class PayPal_Attribute_Mapper {
 			$line_item['description'] = sanitize_text_field( $attributes['productDescription'] );
 		}
 
-		if ( ! empty( $attributes['imageUrl'] ) ) {
-			$line_item['image_url'] = esc_url_raw( $attributes['imageUrl'] );
+		// Product variants (dimensions with options).
+		if ( ! empty( $attributes['variantsEnabled'] ) && ! empty( $attributes['variants']['dimensions'] ) ) {
+			$line_item['variants'] = self::sanitize_variants( $attributes['variants'] );
+		}
+
+		// Adjustable quantity (WOOPTP-170).
+		if ( ! empty( $attributes['adjustableQuantity'] ) && ! empty( $attributes['maxQuantity'] ) ) {
+			$max = absint( $attributes['maxQuantity'] );
+			if ( $max >= 2 ) {
+				$line_item['adjustable_quantity'] = array( 'maximum' => $max );
+			}
+		}
+
+		// Customer notes / custom fields (WOOPTP-171).
+		if ( ! empty( $attributes['customerNotes'] ) && is_array( $attributes['customerNotes'] ) ) {
+			$notes = array();
+			foreach ( $attributes['customerNotes'] as $note ) {
+				$label = sanitize_text_field( $note['label'] ?? '' );
+				if ( '' !== $label ) {
+					$notes[] = array(
+						'label'    => $label,
+						'required' => ! empty( $note['required'] ),
+					);
+				}
+			}
+			if ( ! empty( $notes ) ) {
+				$line_item['customer_notes'] = $notes;
+			}
+		}
+
+		// Tax configuration (WOOPTP-172).
+		if ( ! empty( $attributes['taxEnabled'] ) && ! empty( $attributes['taxName'] ) ) {
+			$tax_type = sanitize_text_field( $attributes['taxType'] ?? 'PERCENTAGE' );
+			$tax      = array(
+				'name' => sanitize_text_field( $attributes['taxName'] ),
+				'type' => in_array( $tax_type, array( 'PERCENTAGE', 'PREFERENCE' ), true ) ? $tax_type : 'PERCENTAGE',
+			);
+
+			if ( 'PREFERENCE' === $tax_type ) {
+				$tax['value'] = 'PROFILE';
+			} else {
+				$tax['value'] = sanitize_text_field( $attributes['taxValue'] ?? '0' );
+			}
+
+			$line_item['taxes'] = array( $tax );
+		}
+
+		// Shipping configuration (WOOPTP-173).
+		if ( ! empty( $attributes['shippingEnabled'] ) ) {
+			$shipping_type = sanitize_text_field( $attributes['shippingType'] ?? 'FLAT' );
+
+			$shipping = array(
+				'type' => in_array( $shipping_type, array( 'FLAT', 'PREFERENCE' ), true ) ? $shipping_type : 'FLAT',
+			);
+
+			if ( 'PREFERENCE' === $shipping_type ) {
+				$shipping['value'] = 'PROFILE';
+			} else {
+				$shipping['value'] = sanitize_text_field( $attributes['shippingValue'] ?? '0' );
+			}
+
+			$line_item['shipping'] = array( $shipping );
+		}
+
+		if ( ! empty( $attributes['collectShippingAddress'] ) ) {
+			$line_item['collect_shipping_address'] = true;
 		}
 
 		$request = array(
@@ -159,8 +222,49 @@ class PayPal_Attribute_Mapper {
 				$attributes['productDescription'] = sanitize_text_field( $line_item['description'] );
 			}
 
-			if ( ! empty( $line_item['image_url'] ) ) {
-				$attributes['imageUrl'] = esc_url_raw( $line_item['image_url'] );
+			if ( ! empty( $line_item['variants']['dimensions'] ) ) {
+				$attributes['variantsEnabled'] = true;
+				$attributes['variants']        = $line_item['variants'];
+			}
+
+			// Adjustable quantity (WOOPTP-170).
+			if ( ! empty( $line_item['adjustable_quantity']['maximum'] ) ) {
+				$attributes['adjustableQuantity'] = true;
+				$attributes['maxQuantity']        = absint( $line_item['adjustable_quantity']['maximum'] );
+			}
+
+			// Customer notes (WOOPTP-171).
+			if ( ! empty( $line_item['customer_notes'] ) && is_array( $line_item['customer_notes'] ) ) {
+				$attributes['customerNotes'] = array_map(
+					function ( $note ) {
+						return array(
+							'label'    => sanitize_text_field( $note['label'] ?? '' ),
+							'required' => ! empty( $note['required'] ),
+						);
+					},
+					$line_item['customer_notes']
+				);
+			}
+
+			// Tax configuration (WOOPTP-172).
+			if ( ! empty( $line_item['taxes'] ) && is_array( $line_item['taxes'] ) ) {
+				$tax                      = $line_item['taxes'][0];
+				$attributes['taxEnabled'] = true;
+				$attributes['taxName']    = sanitize_text_field( $tax['name'] ?? 'Sales Tax' );
+				$attributes['taxType']    = sanitize_text_field( $tax['type'] ?? 'PERCENTAGE' );
+				$attributes['taxValue']   = 'PREFERENCE' === $attributes['taxType'] ? '' : sanitize_text_field( $tax['value'] ?? '' );
+			}
+
+			// Shipping configuration (WOOPTP-173).
+			if ( ! empty( $line_item['shipping'] ) && is_array( $line_item['shipping'] ) ) {
+				$shipping                      = $line_item['shipping'][0];
+				$attributes['shippingEnabled'] = true;
+				$attributes['shippingType']    = sanitize_text_field( $shipping['type'] ?? 'FLAT' );
+				$attributes['shippingValue']   = 'PREFERENCE' === $attributes['shippingType'] ? '' : sanitize_text_field( $shipping['value'] ?? '' );
+			}
+
+			if ( ! empty( $line_item['collect_shipping_address'] ) ) {
+				$attributes['collectShippingAddress'] = true;
 			}
 		}
 
@@ -264,22 +368,10 @@ class PayPal_Attribute_Mapper {
 			}
 		}
 
-		// Optional: image URL validation.
-		if ( ! empty( $attributes['imageUrl'] ) ) {
-			$image_url = esc_url_raw( $attributes['imageUrl'] );
-			if ( empty( $image_url ) || ! wp_http_validate_url( $image_url ) ) {
-				return new WP_Error(
-					'invalid_image_url',
-					__( 'Image URL must be a valid HTTPS URL.', 'jetpack-paypal-payments' ),
-					array( 'status' => 400 )
-				);
-			}
-		}
-
 		// Optional: return URL validation.
 		if ( ! empty( $attributes['returnUrl'] ) ) {
 			$return_url = esc_url_raw( $attributes['returnUrl'] );
-			if ( empty( $return_url ) || ! wp_http_validate_url( $return_url ) ) {
+			if ( empty( $return_url ) || ! wp_http_validate_url( $return_url ) || 0 !== strpos( $return_url, 'https://' ) ) {
 				return new WP_Error(
 					'invalid_return_url',
 					__( 'Return URL must be a valid HTTPS URL.', 'jetpack-paypal-payments' ),
@@ -366,5 +458,70 @@ class PayPal_Attribute_Mapper {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Sanitize and validate a variants structure for the PayPal API.
+	 *
+	 * Enforces: max 5 dimensions, max 10 options per dimension,
+	 * only the primary dimension may have per-option pricing.
+	 *
+	 * @param array $variants Raw variants from block attributes.
+	 * @return array Sanitized variants ready for the API.
+	 */
+	private static function sanitize_variants( array $variants ) {
+		if ( empty( $variants['dimensions'] ) || ! is_array( $variants['dimensions'] ) ) {
+			return array( 'dimensions' => array() );
+		}
+
+		$sanitized_dimensions = array();
+		$count                = 0;
+
+		foreach ( $variants['dimensions'] as $dimension ) {
+			if ( ++$count > 5 ) {
+				break;
+			}
+
+			$dim = array(
+				'name'    => sanitize_text_field( $dimension['name'] ?? '' ),
+				'primary' => ! empty( $dimension['primary'] ),
+				'options' => array(),
+			);
+
+			if ( empty( $dim['name'] ) ) {
+				continue;
+			}
+
+			$option_count = 0;
+			foreach ( ( $dimension['options'] ?? array() ) as $option ) {
+				if ( ++$option_count > 10 ) {
+					break;
+				}
+
+				$opt = array(
+					'label' => sanitize_text_field( $option['label'] ?? '' ),
+				);
+
+				if ( empty( $opt['label'] ) ) {
+					continue;
+				}
+
+				// Only primary dimension can have per-option pricing.
+				if ( $dim['primary'] && ! empty( $option['unit_amount'] ) && is_array( $option['unit_amount'] ) ) {
+					$opt['unit_amount'] = array(
+						'currency_code' => sanitize_text_field( $option['unit_amount']['currency_code'] ?? 'USD' ),
+						'value'         => sanitize_text_field( $option['unit_amount']['value'] ?? '' ),
+					);
+				}
+
+				$dim['options'][] = $opt;
+			}
+
+			if ( ! empty( $dim['options'] ) ) {
+				$sanitized_dimensions[] = $dim;
+			}
+		}
+
+		return array( 'dimensions' => $sanitized_dimensions );
 	}
 }

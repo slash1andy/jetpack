@@ -15,7 +15,13 @@
  */
 
 import apiFetch from '@wordpress/api-fetch'; // eslint-disable-line import/no-unresolved
-import { BlockControls, InspectorControls, useBlockProps } from '@wordpress/block-editor';
+import {
+	BlockControls,
+	InspectorControls,
+	MediaUpload,
+	MediaUploadCheck,
+	useBlockProps,
+} from '@wordpress/block-editor';
 import {
 	Button,
 	Notice,
@@ -24,12 +30,22 @@ import {
 	Spinner,
 	TextControl,
 	TextareaControl,
+	ToggleControl,
 	ToolbarButton,
 	ToolbarGroup,
 } from '@wordpress/components';
 import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import PayPalButtonPreview from './paypal-button-preview';
+import {
+	validatePrice,
+	validateProductName,
+	validateDescription,
+	getUserFriendlyError,
+	MAX_NAME_LENGTH,
+	MAX_DESCRIPTION_LENGTH,
+} from './validation';
+import VariantBuilder, { validateVariants } from './variant-builder';
 
 /**
  * Supported currencies for the currency selector.
@@ -61,7 +77,6 @@ const SUPPORTED_CURRENCIES = [
 	{ label: 'THB — Thai Baht', value: 'THB' },
 	{ label: 'INR — Indian Rupee', value: 'INR' },
 	{ label: 'CNY — Chinese Yuan', value: 'CNY' },
-	{ label: 'RUB — Russian Ruble', value: 'RUB' },
 ];
 
 /**
@@ -69,117 +84,13 @@ const SUPPORTED_CURRENCIES = [
  */
 const VALID_CURRENCY_CODES = new Set( SUPPORTED_CURRENCIES.map( c => c.value ) );
 
-/**
- * Validation constants — match server-side limits.
- */
-const MAX_NAME_LENGTH = 127;
-const MAX_DESCRIPTION_LENGTH = 256;
-
-/**
- * Button type options for the block display style.
- */
-const BUTTON_TYPE_OPTIONS = [
-	{ label: __( 'Stacked', 'jetpack-paypal-payments' ), value: 'stacked' },
-	{ label: __( 'Single', 'jetpack-paypal-payments' ), value: 'single' },
-];
+// Button type is always 'single' — the hosted payment page handles
+// payment method selection (PayPal, cards, wallets, etc.).
 
 /**
  * REST API base path for PayPal endpoints.
  */
 const API_BASE = '/jetpack/v4/paypal';
-
-/**
- * Validate a price string.
- *
- * @param {string} value - The price value.
- * @return {string|null} Error message or null if valid.
- */
-function validatePrice( value ) {
-	if ( ! value || value.trim() === '' ) {
-		return __( 'Price is required.', 'jetpack-paypal-payments' );
-	}
-
-	const num = parseFloat( value );
-	if ( isNaN( num ) || num <= 0 ) {
-		return __( 'Price must be a positive number.', 'jetpack-paypal-payments' );
-	}
-
-	// Check max 2 decimal places.
-	if ( ! /^\d+(\.\d{1,2})?$/.test( value.trim() ) ) {
-		return __(
-			'Price can have at most 2 decimal places (e.g., "29.99").',
-			'jetpack-paypal-payments'
-		);
-	}
-
-	return null;
-}
-
-/**
- * Validate a product name.
- *
- * @param {string} value - The product name.
- * @return {string|null} Error message or null if valid.
- */
-function validateProductName( value ) {
-	if ( ! value || value.trim() === '' ) {
-		return __( 'Product name is required.', 'jetpack-paypal-payments' );
-	}
-
-	if ( value.length > MAX_NAME_LENGTH ) {
-		return sprintf(
-			/* translators: %d: maximum number of characters allowed for the product name */
-			__( 'Product name must be %d characters or fewer.', 'jetpack-paypal-payments' ),
-			MAX_NAME_LENGTH
-		);
-	}
-
-	return null;
-}
-
-/**
- * Validate a description (optional field).
- *
- * @param {string} value - The description.
- * @return {string|null} Error message or null if valid.
- */
-function validateDescription( value ) {
-	if ( value && value.length > MAX_DESCRIPTION_LENGTH ) {
-		return sprintf(
-			/* translators: %d: maximum number of characters allowed for the description */
-			__( 'Description must be %d characters or fewer.', 'jetpack-paypal-payments' ),
-			MAX_DESCRIPTION_LENGTH
-		);
-	}
-
-	return null;
-}
-
-/**
- * Map an API error response to a user-friendly message.
- *
- * The server-side already returns user-friendly messages, but this
- * provides client-side fallbacks for network errors and edge cases.
- *
- * @param {object} err - The error object from apiFetch.
- * @return {string} User-friendly error message.
- */
-function getUserFriendlyError( err ) {
-	// Server already provides friendly messages — use them.
-	if ( err.message ) {
-		return err.message;
-	}
-
-	// Network-level errors (no response from server).
-	if ( err.code === 'fetch_error' ) {
-		return __(
-			'Could not reach the server. Please check your internet connection and try again.',
-			'jetpack-paypal-payments'
-		);
-	}
-
-	return __( 'An unexpected error occurred. Please try again.', 'jetpack-paypal-payments' );
-}
 
 /**
  * PayPal Payment Buttons edit component.
@@ -192,7 +103,6 @@ function getUserFriendlyError( err ) {
 export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } ) {
 	const {
 		isApiManaged,
-		buttonType,
 		scriptSrc,
 		hostedButtonId,
 		buttonText,
@@ -202,10 +112,39 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		price,
 		currencyCode,
 		productDescription,
+		imageUrl,
+		imageId,
 		returnUrl,
+		variantsEnabled,
+		variants,
+		adjustableQuantity,
+		maxQuantity,
+		customerNotes,
+		taxEnabled,
+		taxType,
+		taxName,
+		taxValue,
 	} = attributes;
 
 	const blockProps = useBlockProps();
+
+	// Pre-extract translated strings used in ternaries to avoid
+	// i18n-check-webpack-plugin errors when the minifier collapses branches.
+	const labelConnect = __( 'Connect', 'jetpack-paypal-payments' );
+	const labelConnecting = __( 'Connecting\u2026', 'jetpack-paypal-payments' );
+	const labelHide = __( 'Hide', 'jetpack-paypal-payments' );
+	const labelShow = __( 'Show', 'jetpack-paypal-payments' );
+	const labelHideSecret = __( 'Hide client secret', 'jetpack-paypal-payments' );
+	const labelShowSecret = __( 'Show client secret', 'jetpack-paypal-payments' );
+	const labelEditHeading = __( 'Edit PayPal Payment Button', 'jetpack-paypal-payments' );
+	const labelCreateHeading = __( 'Create PayPal Payment Button', 'jetpack-paypal-payments' );
+	const helpQtyOn = __(
+		'Customers can buy multiple units at checkout.',
+		'jetpack-paypal-payments'
+	);
+	const helpQtyOff = __( 'Fixed at 1 unit per purchase.', 'jetpack-paypal-payments' );
+	const helpTaxOn = __( 'Tax will be added at PayPal checkout.', 'jetpack-paypal-payments' );
+	const helpTaxOff = __( 'No tax collected.', 'jetpack-paypal-payments' );
 
 	// Connection state.
 	const [ isConnected, setIsConnected ] = useState( false );
@@ -226,9 +165,47 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	const [ connectError, setConnectError ] = useState( null );
 	const [ isConnecting, setIsConnecting ] = useState( false );
 
+	// Partner Referrals onboarding state.
+	const [ isGeneratingSignupLink, setIsGeneratingSignupLink ] = useState( false );
+	const [ isCompletingOnboarding, setIsCompletingOnboarding ] = useState( false );
+
+	// Pre-compute "Connect with PayPal" button label to avoid nested ternary.
+	const labelConnectWithPayPal = __( 'Connect with PayPal', 'jetpack-paypal-payments' );
+	const labelCompletingSetup = __( 'Completing setup\u2026', 'jetpack-paypal-payments' );
+	let connectWithPayPalLabel = labelConnectWithPayPal;
+	if ( isGeneratingSignupLink ) {
+		connectWithPayPalLabel = labelConnecting;
+	} else if ( isCompletingOnboarding ) {
+		connectWithPayPalLabel = labelCompletingSetup;
+	}
+
 	// Wizard step state: 'welcome' | 'dashboard' | 'credentials' | 'success'
-	const [ wizardStep, setWizardStep ] = useState( 'welcome' );
+	// Persisted in localStorage so navigating away and back doesn't reset the wizard.
+	const [ wizardStep, setWizardStep ] = useState( () => {
+		try {
+			const saved = window.localStorage.getItem( 'jetpack-paypal-wizard-step' );
+			if ( saved && [ 'welcome', 'dashboard', 'credentials', 'success' ].includes( saved ) ) {
+				return saved;
+			}
+		} catch {
+			// localStorage unavailable — use default.
+		}
+		return 'welcome';
+	} );
 	const [ showSecretField, setShowSecretField ] = useState( false );
+
+	// Persist wizard step changes to localStorage.
+	useEffect( () => {
+		try {
+			if ( wizardStep === 'success' || isConnected ) {
+				window.localStorage.removeItem( 'jetpack-paypal-wizard-step' );
+			} else {
+				window.localStorage.setItem( 'jetpack-paypal-wizard-step', wizardStep );
+			}
+		} catch {
+			// localStorage unavailable — ignore.
+		}
+	}, [ wizardStep, isConnected ] );
 
 	// Inline validation state — track which fields have been touched.
 	const [ touchedFields, setTouchedFields ] = useState( {} );
@@ -260,10 +237,21 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	);
 
 	/**
-	 * Whether the form is valid (no validation errors on required fields).
+	 * Variant validation errors (empty array if valid or disabled).
+	 */
+	const variantErrors = useMemo(
+		() => validateVariants( variantsEnabled, variants ),
+		[ variantsEnabled, variants ]
+	);
+
+	/**
+	 * Whether the form is valid (no validation errors on required fields or variants).
 	 */
 	const isFormValid =
-		! validationErrors.productName && ! validationErrors.price && ! validationErrors.currencyCode;
+		! validationErrors.productName &&
+		! validationErrors.price &&
+		! validationErrors.currencyCode &&
+		variantErrors.length === 0;
 
 	/**
 	 * Check PayPal connection status on mount.
@@ -358,16 +346,162 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	}, [ clientId, clientSecret, environment ] );
 
 	/**
-	 * Handle PayPal disconnect.
+	 * Check onboarding status after Partner Referrals popup closes.
+	 */
+	const checkOnboardingStatus = useCallback( () => {
+		setIsCompletingOnboarding( true );
+
+		apiFetch( {
+			path: `${ API_BASE }/onboarding/status`,
+			method: 'GET',
+		} )
+			.then( status => {
+				if ( status.payments_receivable ) {
+					setIsConnected( true );
+					setEnvironment( status.environment || environment );
+					setWizardStep( 'success' );
+				} else {
+					setConnectError(
+						__(
+							'PayPal onboarding was not completed. Please try again.',
+							'jetpack-paypal-payments'
+						)
+					);
+				}
+			} )
+			.catch( err => {
+				setConnectError( getUserFriendlyError( err ) );
+			} )
+			.finally( () => {
+				setIsCompletingOnboarding( false );
+			} );
+	}, [ environment ] );
+
+	/**
+	 * Handle "Connect with PayPal" Partner Referrals flow.
+	 * Generates a signup link and opens PayPal in a popup.
+	 */
+	const handleConnectWithPayPal = useCallback( () => {
+		setConnectError( null );
+		setIsGeneratingSignupLink( true );
+
+		const onboardingReturnUrl =
+			window.location.href.split( '?' )[ 0 ] + '?paypal_onboarding_return=1';
+
+		apiFetch( {
+			path: `${ API_BASE }/onboarding/signup-link`,
+			method: 'POST',
+			data: {
+				return_url: onboardingReturnUrl,
+				environment,
+			},
+		} )
+			.then( response => {
+				setIsGeneratingSignupLink( false );
+
+				// Open PayPal mini-browser popup.
+				const width = 600;
+				const height = 700;
+				const left = ( window.screen.width - width ) / 2;
+				const top = ( window.screen.height - height ) / 2;
+				const popup = window.open(
+					response.action_url,
+					'PayPalOnboarding',
+					`width=${ width },height=${ height },left=${ left },top=${ top },scrollbars=yes`
+				);
+
+				// Poll for popup close (PayPal redirects back to return_url in the popup).
+				const pollTimer = setInterval( () => {
+					if ( ! popup || popup.closed ) {
+						clearInterval( pollTimer );
+						// Check if onboarding completed by checking connection status.
+						checkOnboardingStatus();
+					}
+				}, 500 );
+			} )
+			.catch( err => {
+				setIsGeneratingSignupLink( false );
+				setConnectError( getUserFriendlyError( err ) );
+			} );
+	}, [ environment, checkOnboardingStatus ] );
+
+	/**
+	 * Listen for PayPal postMessage callback (some flows use this instead of redirect).
+	 */
+	useEffect( () => {
+		// PayPal's mini-browser onboarding flow posts messages from www.* origins.
+		// The api-m.* domains are API-only and do not send postMessages.
+		const PAYPAL_ORIGINS = [ 'https://www.paypal.com', 'https://www.sandbox.paypal.com' ];
+
+		const handleMessage = event => {
+			// Only accept messages from PayPal domains to prevent credential injection.
+			if ( ! PAYPAL_ORIGINS.includes( event.origin ) ) {
+				return;
+			}
+
+			// PayPal sends onboarding data via postMessage.
+			if ( event.data && event.data.authCode && event.data.sharedId ) {
+				apiFetch( {
+					path: `${ API_BASE }/onboarding/complete`,
+					method: 'POST',
+					data: {
+						auth_code: event.data.authCode,
+						shared_id: event.data.sharedId,
+						merchant_id_in_paypal: event.data.merchantIdInPayPal || '',
+					},
+				} )
+					.then( () => {
+						setIsConnected( true );
+						setWizardStep( 'success' );
+					} )
+					.catch( err => {
+						setConnectError( getUserFriendlyError( err ) );
+					} );
+			}
+		};
+
+		window.addEventListener( 'message', handleMessage );
+		return () => window.removeEventListener( 'message', handleMessage );
+	}, [] );
+
+	/**
+	 * Handle PayPal disconnect with confirmation.
 	 */
 	const handleDisconnect = useCallback( () => {
+		if (
+			// eslint-disable-next-line no-alert -- Confirmation required for destructive action.
+			! window.confirm(
+				__(
+					'Disconnect your PayPal account? You will need to re-enter your credentials to create new buttons. Existing published buttons will continue to work.',
+					'jetpack-paypal-payments'
+				)
+			)
+		) {
+			return;
+		}
+
+		const doDisconnect = () => {
+			setIsConnected( false );
+			setWizardStep( 'welcome' );
+			// Clear block attributes so the block shows the connect wizard.
+			setAttributes( {
+				isApiManaged: false,
+				resourceId: '',
+				paymentLink: '',
+				productName: '',
+				price: '',
+				productDescription: '',
+			} );
+			setSuccessMessage( __( 'PayPal account disconnected.', 'jetpack-paypal-payments' ) );
+		};
+
 		apiFetch( {
 			path: `${ API_BASE }/disconnect`,
 			method: 'POST',
-		} ).then( () => {
-			setIsConnected( false );
-		} );
-	}, [] );
+		} )
+			.then( doDisconnect )
+			.catch( doDisconnect ); // Still disconnect locally if API fails.
+	}, [ setAttributes ] );
 
 	/**
 	 * Build the line_items payload from current attributes.
@@ -387,11 +521,44 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 						value: price,
 					},
 					...( productDescription ? { description: productDescription } : {} ),
+					...( variantsEnabled && variants ? { variants } : {} ),
+					...( adjustableQuantity && maxQuantity > 1
+						? { adjustable_quantity: { maximum: parseInt( maxQuantity, 10 ) } }
+						: {} ),
+					...( customerNotes?.length > 0
+						? { customer_notes: customerNotes.filter( n => n.label?.trim() ) }
+						: {} ),
+					...( taxEnabled && taxName
+						? {
+								taxes: [
+									{
+										name: taxName,
+										type: taxType || 'PERCENTAGE',
+										value: taxType === 'PREFERENCE' ? 'PROFILE' : taxValue || '0',
+									},
+								],
+						  }
+						: {} ),
 				},
 			],
 			...( returnUrl ? { return_url: returnUrl } : {} ),
 		} ),
-		[ productName, price, currencyCode, productDescription, returnUrl ]
+		[
+			productName,
+			price,
+			currencyCode,
+			productDescription,
+			returnUrl,
+			variantsEnabled,
+			variants,
+			adjustableQuantity,
+			maxQuantity,
+			customerNotes,
+			taxEnabled,
+			taxType,
+			taxName,
+			taxValue,
+		]
 	);
 
 	/**
@@ -425,7 +592,9 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					resourceId: response.id,
 					paymentLink: response.payment_link,
 				} );
-				setSuccessMessage( __( 'PayPal button created successfully!', 'jetpack-paypal-payments' ) );
+				setSuccessMessage(
+					__( 'PayPal button and payment link created successfully!', 'jetpack-paypal-payments' )
+				);
 				setIsEditing( false );
 				setTouchedFields( {} );
 			} )
@@ -461,6 +630,8 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		setSuccessMessage( null );
 		setIsCreating( true );
 
+		let isRecreating = false;
+
 		apiFetch( {
 			path: `${ API_BASE }/buttons/${ resourceId }`,
 			method: 'PUT',
@@ -475,35 +646,66 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 				setTouchedFields( {} );
 			} )
 			.catch( err => {
-				const errorMessage = getUserFriendlyError( err );
-
-				// If the resource was not found (404), clear stale state and prompt re-creation.
+				// If the resource was deleted from PayPal (404), automatically
+				// re-create it as a new button with the same product data.
+				// This handles demo/playground blocks and buttons deleted outside WordPress.
 				if ( err.code === 'paypal_api_resource_not_found' || err.data?.status === 404 ) {
-					setAttributes( {
-						isApiManaged: false,
-						resourceId: undefined,
-						paymentLink: undefined,
-					} );
-					setError(
-						__(
-							'This button no longer exists on PayPal. Please create a new one.',
-							'jetpack-paypal-payments'
-						)
-					);
-				} else {
-					setError( errorMessage );
+					isRecreating = true;
+					apiFetch( {
+						path: `${ API_BASE }/buttons`,
+						method: 'POST',
+						data: buildRequestData(),
+					} )
+						.then( response => {
+							setAttributes( {
+								isApiManaged: true,
+								resourceId: response.id,
+								paymentLink: response.payment_link,
+							} );
+							setSuccessMessage(
+								__(
+									'Button re-created on PayPal with a new payment link.',
+									'jetpack-paypal-payments'
+								)
+							);
+							setIsEditing( false );
+							setTouchedFields( {} );
+						} )
+						.catch( createErr => {
+							setError( getUserFriendlyError( createErr ) );
+						} )
+						.finally( () => {
+							setIsCreating( false );
+						} );
+					return;
 				}
+
+				setError( getUserFriendlyError( err ) );
 			} )
 			.finally( () => {
-				setIsCreating( false );
+				if ( ! isRecreating ) {
+					setIsCreating( false );
+				}
 			} );
 	}, [ resourceId, buildRequestData, paymentLink, setAttributes, isFormValid ] );
 
 	/**
-	 * Delete the PayPal payment button via the API.
+	 * Delete the PayPal payment button via the API with confirmation.
 	 */
 	const handleDeleteButton = useCallback( () => {
 		if ( ! resourceId ) {
+			return;
+		}
+
+		if (
+			// eslint-disable-next-line no-alert -- Confirmation required for destructive action.
+			! window.confirm(
+				__(
+					'Delete this PayPal button? This permanently removes the payment resource from PayPal. Customers will no longer be able to pay using this button.',
+					'jetpack-paypal-payments'
+				)
+			)
+		) {
 			return;
 		}
 
@@ -578,12 +780,6 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 				</div>
 				<InspectorControls>
 					<PanelBody title={ __( 'Button Settings', 'jetpack-paypal-payments' ) }>
-						<SelectControl
-							label={ __( 'Button Layout', 'jetpack-paypal-payments' ) }
-							value={ buttonType }
-							options={ BUTTON_TYPE_OPTIONS }
-							onChange={ value => setAttributes( { buttonType: value } ) }
-						/>
 						<TextControl
 							label={ __( 'Button Text', 'jetpack-paypal-payments' ) }
 							value={ buttonText }
@@ -595,66 +791,151 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		);
 	}
 
-	// Not connected — show guided connection wizard.
-	if ( ! isConnected ) {
+	/**
+	 * PayPal full-color logo SVG for the wizard welcome step.
+	 * Source: paypalobjects.com/digitalassets/c/website/logo/full-text/pp_fc_hl.svg
+	 * Includes the double-P monogram + wordmark for brand recognition.
+	 */
+	const paypalLogoSvg = (
+		<svg
+			className="jetpack-paypal-wizard__logo"
+			xmlns="http://www.w3.org/2000/svg"
+			viewBox="0 0 246 60"
+			aria-hidden="true"
+			focusable="false"
+		>
+			{ /* Double-P monogram — dark blue back P */ }
+			<path
+				d="M45.4 15.6c-.06.35-.12.71-.19 1.08C42.82 29.22 34.47 33.55 23.81 33.55h-5.43c-1.3 0-2.4.95-2.6 2.23l-3.57 22.61c-.13.84.52 1.61 1.38 1.61h9.62c1.14 0 2.11-.83 2.29-1.95l.09-.49 1.81-11.5.12-.63c.18-1.13 1.15-1.95 2.29-1.95h1.44c9.32 0 16.62-3.79 18.75-14.74.89-4.58.43-8.4-1.93-11.08-.69-.81-1.58-1.48-2.61-2.03"
+				fill="#2790C3"
+			/>
+			{ /* Double-P monogram — shadow */ }
+			<path
+				d="M42.89 14.6c-.37-.11-.75-.21-1.15-.3-.4-.09-.81-.17-1.22-.23-1.46-.24-3.07-.35-4.78-.35H21.24c-.36 0-.69.08-1 .23-.67.32-1.17.95-1.29 1.73l-3.08 19.54-.09.57c.2-1.29 1.3-2.23 2.6-2.23h5.43c10.66 0 19-4.33 21.44-16.85.07-.37.13-.73.19-1.07-.62-.33-1.28-.55-2-.79-.18-.06-.36-.11-.54-.16"
+				fill="#1F264F"
+			/>
+			{ /* Double-P monogram — dark blue front P */ }
+			<path
+				d="M18.95 15.68c.12-.77.62-1.41 1.29-1.73.31-.15.64-.23 1-.23h14.5c1.72 0 3.32.11 4.78.35.41.07.82.14 1.22.24.4.09.78.18 1.15.3.18.06.36.11.54.16.72.24 1.39.5 2 .79.73-4.63 0-7.78-2.5-10.63C40.18 1.84 35.2.5 28.83.5H10.33c-1.3 0-2.4.95-2.61 2.23L.02 51.56c-.15.96.61 1.84 1.59 1.84h11.42l4.95-31.72"
+				fill="#27346A"
+			/>
+			{ /* Wordmark — "Pay" dark blue */ }
+			<path
+				d="M92.69 13.8H79.2c-.92 0-1.71.67-1.85 1.58l-5.45 34.58c-.11.68.42 1.3 1.11 1.3h5.57c.64 0 1.19-.47 1.3-1.1l1.55-9.83c.14-.91.93-1.58 1.85-1.58h4.27c8.88 0 14 -4.3 15.35-12.82.6-3.73.02-6.65-1.72-8.7-1.92-2.25-5.32-3.44-9.83-3.44zm.82 12.63c-.74 4.84-4.44 4.84-8.01 4.84h-2.03l1.43-9.04c.09-.55.56-.95 1.11-.95h.93c2.43 0 4.73 0 5.92 1.39.71.83.93 2.06.65 3.77z"
+				fill="#27346A"
+			/>
+			<path
+				d="M124 38.85c-.63 3.69-3.55 6.17-7.29 6.17-1.87 0-3.37-.6-4.33-1.74-.96-1.13-1.32-2.74-1.02-4.53.58-3.66 3.56-6.2 7.24-6.2 1.83 0 3.32.61 4.3 1.76.99 1.16 1.38 2.78 1.1 4.57zm9-12.57h-6.46c-.55 0-1.02.4-1.11.95l-.28 1.81-.45-.65c-1.4-2.03-4.51-2.71-7.63-2.71-7.13 0-13.23 5.4-14.41 12.99-.62 3.78.16 7.4 2.3 9.92 1.97 2.32 4.78 3.28 8.13 3.28 5.75 0 8.94-3.69 8.94-3.69l-.29 1.79c-.11.68.42 1.3 1.11 1.3h5.82c.92 0 1.71-.67 1.85-1.58l3.49-22.1c.11-.68-.42-1.3-1.11-1.3z"
+				fill="#27346A"
+			/>
+			<path
+				d="M167.38 26.28h-6.49c-.62 0-1.2.31-1.55.82l-8.95 13.19-3.79-12.67c-.24-.79-.97-1.34-1.8-1.34h-6.38c-.77 0-1.31.76-1.06 1.49l7.15 20.97-6.72 9.49c-.53.74 0 1.77.91 1.77h6.48c.61 0 1.19-.3 1.54-.8L168.31 28c.52-.74-.01-1.77-.93-1.77"
+				fill="#27346A"
+			/>
+			{ /* Wordmark — "Pal" light blue */ }
+			<path
+				d="M188.87 13.8h-13.49c-.92 0-1.71.67-1.85 1.58l-5.45 34.58c-.11.68.42 1.3 1.11 1.3h6.92c.64 0 1.2-.47 1.3-1.11l1.55-9.8c.14-.91.93-1.58 1.85-1.58h4.27c8.88 0 14-4.3 15.34-12.82.61-3.73.03-6.65-1.72-8.7-1.92-2.25-5.32-3.44-9.83-3.44zm.82 12.63c-.74 4.84-4.44 4.84-8.01 4.84h-2.03l1.43-9.04c.09-.55.56-.95 1.11-.95h.93c2.43 0 4.73 0 5.92 1.39.71.83.93 2.06.65 3.77z"
+				fill="#2790C3"
+			/>
+			<path
+				d="M220.17 38.85c-.62 3.69-3.55 6.17-7.29 6.17-1.87 0-3.37-.6-4.33-1.74-.96-1.13-1.33-2.74-1.02-4.53.58-3.66 3.56-6.2 7.24-6.2 1.83 0 3.32.61 4.3 1.76.99 1.16 1.38 2.78 1.1 4.57zm9-12.57h-6.46c-.55 0-1.02.4-1.11.95l-.28 1.81-.45-.65c-1.4-2.03-4.52-2.71-7.63-2.71-7.13 0-13.23 5.4-14.42 12.99-.62 3.78.16 7.4 2.3 9.92 1.97 2.32 4.79 3.28 8.13 3.28 5.75 0 8.94-3.69 8.94-3.69l-.29 1.79c-.11.68.42 1.3 1.11 1.3h5.82c.92 0 1.71-.67 1.85-1.58l3.49-22.1c.11-.68-.42-1.3-1.11-1.3z"
+				fill="#2790C3"
+			/>
+			<path
+				d="M236.78 14.75l-5.53 35.21c-.11.68.42 1.3 1.11 1.3h5.57c.92 0 1.71-.67 1.85-1.58l5.46-34.58c.11-.68-.42-1.3-1.11-1.3h-6.23c-.55 0-1.02.4-1.11.95"
+				fill="#2790C3"
+			/>
+		</svg>
+	);
+
+	// Not connected and no existing button — show guided connection wizard.
+	// Skip the wizard if the block already has a saved button (e.g. demo posts in Playground).
+	if ( ! isConnected && ! hasButton ) {
 		return (
 			<div { ...blockProps }>
 				<div className="jetpack-paypal-payment-buttons__connect">
 					{ /* Step indicator */ }
 					{ wizardStep !== 'welcome' && wizardStep !== 'success' && (
-						<div className="jetpack-paypal-wizard__step-indicator">
+						<div
+							className="jetpack-paypal-wizard__step-indicator"
+							role="list"
+							aria-label={ __( 'Setup progress', 'jetpack-paypal-payments' ) }
+						>
 							<span
+								role="listitem"
+								aria-current={ wizardStep === 'dashboard' ? 'step' : undefined }
 								className={ `jetpack-paypal-wizard__step ${
 									wizardStep === 'dashboard' || wizardStep === 'credentials' ? 'is-active' : ''
 								}` }
 							>
-								{ __( '1', 'jetpack-paypal-payments' ) }
+								{ '1' }
 							</span>
-							<span className="jetpack-paypal-wizard__step-line" />
+							<span className="jetpack-paypal-wizard__step-line" aria-hidden="true" />
 							<span
+								role="listitem"
+								aria-current={ wizardStep === 'credentials' ? 'step' : undefined }
 								className={ `jetpack-paypal-wizard__step ${
 									wizardStep === 'credentials' ? 'is-active' : ''
 								}` }
 							>
-								{ __( '2', 'jetpack-paypal-payments' ) }
+								{ '2' }
 							</span>
-							<span className="jetpack-paypal-wizard__step-line" />
-							<span className="jetpack-paypal-wizard__step">
-								{ __( '3', 'jetpack-paypal-payments' ) }
+							<span className="jetpack-paypal-wizard__step-line" aria-hidden="true" />
+							<span role="listitem" className="jetpack-paypal-wizard__step">
+								{ '3' }
 							</span>
 						</div>
 					) }
 
-					{ /* Step 1: Welcome */ }
+					{ /* Step 1: Welcome — Partner Referrals primary, manual credentials secondary */ }
 					{ wizardStep === 'welcome' && (
 						<div className="jetpack-paypal-wizard__welcome">
+							{ paypalLogoSvg }
 							<h3>{ __( 'Connect PayPal', 'jetpack-paypal-payments' ) }</h3>
 							<p>
 								{ __(
-									'Accept payments with PayPal by connecting your PayPal Developer account.',
+									'Accept payments with PayPal by connecting your PayPal account.',
 									'jetpack-paypal-payments'
 								) }
 							</p>
-							<p>
-								{ __(
-									"You'll need your API credentials — we'll walk you through finding them.",
-									'jetpack-paypal-payments'
-								) }
+							<div className="jetpack-paypal-wizard__env-toggle">
+								<ToggleControl
+									label={ __( 'Use sandbox (testing)', 'jetpack-paypal-payments' ) }
+									checked={ environment === 'sandbox' }
+									onChange={ checked => setEnvironment( checked ? 'sandbox' : 'production' ) }
+								/>
+							</div>
+							<div className="jetpack-paypal-wizard__actions">
+								<Button
+									variant="primary"
+									onClick={ handleConnectWithPayPal }
+									isBusy={ isGeneratingSignupLink || isCompletingOnboarding }
+									disabled={ isGeneratingSignupLink || isCompletingOnboarding }
+								>
+									{ connectWithPayPalLabel }
+								</Button>
+							</div>
+							{ connectError && (
+								<Notice status="error" isDismissible onDismiss={ () => setConnectError( null ) }>
+									{ connectError }
+								</Notice>
+							) }
+							<p className="jetpack-paypal-wizard__hint">
+								<Button variant="link" onClick={ () => setWizardStep( 'dashboard' ) }>
+									{ __( 'Or enter your API credentials manually', 'jetpack-paypal-payments' ) }
+								</Button>
 							</p>
-							<Button variant="primary" onClick={ () => setWizardStep( 'dashboard' ) }>
-								{ __( 'Get Started', 'jetpack-paypal-payments' ) }
-							</Button>
 						</div>
 					) }
 
 					{ /* Step 2: Open PayPal Dashboard */ }
 					{ wizardStep === 'dashboard' && (
 						<div className="jetpack-paypal-wizard__dashboard">
-							<h3>{ __( 'Step 1 of 3: Open PayPal Dashboard', 'jetpack-paypal-payments' ) }</h3>
+							<h3>{ __( 'Step 1 of 3: Get Your API Credentials', 'jetpack-paypal-payments' ) }</h3>
 							<ol className="jetpack-paypal-wizard__instructions">
 								<li>
 									{ __(
-										'Click the button below to open the PayPal Developer Dashboard',
+										'Open the PayPal Developer Dashboard (opens in a new tab)',
 										'jetpack-paypal-payments'
 									) }
 								</li>
@@ -662,7 +943,12 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 									{ __( 'Log in with your PayPal Business account', 'jetpack-paypal-payments' ) }
 								</li>
 								<li>{ __( 'Go to Apps & Credentials', 'jetpack-paypal-payments' ) }</li>
-								<li>{ __( 'Select your app (or create one)', 'jetpack-paypal-payments' ) }</li>
+								<li>
+									{ __(
+										'Copy the Client ID and Client Secret from your app',
+										'jetpack-paypal-payments'
+									) }
+								</li>
 							</ol>
 							<div className="jetpack-paypal-wizard__actions">
 								<Button
@@ -671,15 +957,23 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 									target="_blank"
 									rel="noopener noreferrer"
 								>
-									{ __( 'Open PayPal Dashboard', 'jetpack-paypal-payments' ) }
+									{ __( 'Open PayPal Dashboard ↗', 'jetpack-paypal-payments' ) }
+								</Button>
+							</div>
+							<p className="jetpack-paypal-wizard__hint">
+								{ __(
+									'Once you have your Client ID and Secret, come back here and continue.',
+									'jetpack-paypal-payments'
+								) }
+							</p>
+							<div className="jetpack-paypal-wizard__actions">
+								<Button variant="primary" onClick={ () => setWizardStep( 'credentials' ) }>
+									{ __( 'I have my credentials — Next', 'jetpack-paypal-payments' ) }
 								</Button>
 							</div>
 							<div className="jetpack-paypal-wizard__nav">
-								<Button variant="secondary" onClick={ () => setWizardStep( 'credentials' ) }>
-									{ __( 'I have my credentials', 'jetpack-paypal-payments' ) }
-								</Button>
-								<Button variant="tertiary" onClick={ () => setWizardStep( 'welcome' ) }>
-									{ __( 'Back', 'jetpack-paypal-payments' ) }
+								<Button variant="link" onClick={ () => setWizardStep( 'welcome' ) }>
+									{ __( '← Back', 'jetpack-paypal-payments' ) }
 								</Button>
 							</div>
 						</div>
@@ -691,7 +985,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 							<h3>{ __( 'Step 2 of 3: Enter Credentials', 'jetpack-paypal-payments' ) }</h3>
 							<p className="jetpack-paypal-wizard__subtitle">
 								{ __(
-									'Copy these from your app in the PayPal Developer Dashboard:',
+									'Enter the API credentials from your PayPal account:',
 									'jetpack-paypal-payments'
 								) }
 							</p>
@@ -743,15 +1037,9 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 									variant="tertiary"
 									className="jetpack-paypal-wizard__toggle-secret"
 									onClick={ () => setShowSecretField( ! showSecretField ) }
-									aria-label={
-										showSecretField
-											? __( 'Hide client secret', 'jetpack-paypal-payments' )
-											: __( 'Show client secret', 'jetpack-paypal-payments' )
-									}
+									aria-label={ showSecretField ? labelHideSecret : labelShowSecret }
 								>
-									{ showSecretField
-										? __( 'Hide', 'jetpack-paypal-payments' )
-										: __( 'Show', 'jetpack-paypal-payments' ) }
+									{ showSecretField ? labelHide : labelShow }
 								</Button>
 							</div>
 
@@ -762,16 +1050,16 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 									isBusy={ isConnecting }
 									disabled={ isConnecting || ! clientId || ! clientSecret }
 								>
-									{ isConnecting
-										? __( 'Connecting…', 'jetpack-paypal-payments' )
-										: __( 'Connect', 'jetpack-paypal-payments' ) }
+									{ isConnecting ? labelConnecting : labelConnect }
 								</Button>
+							</div>
+							<div className="jetpack-paypal-wizard__nav">
 								<Button
-									variant="tertiary"
+									variant="link"
 									onClick={ () => setWizardStep( 'dashboard' ) }
 									disabled={ isConnecting }
 								>
-									{ __( 'Back', 'jetpack-paypal-payments' ) }
+									{ __( '← Back', 'jetpack-paypal-payments' ) }
 								</Button>
 							</div>
 
@@ -781,9 +1069,18 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 										{ __( 'Use Sandbox for testing', 'jetpack-paypal-payments' ) }
 									</Button>
 								) : (
-									<Button variant="link" onClick={ () => setEnvironment( 'production' ) }>
-										{ __( 'Switch to Production (Live)', 'jetpack-paypal-payments' ) }
-									</Button>
+									<>
+										<Button variant="link" onClick={ () => setEnvironment( 'production' ) }>
+											{ __( 'Switch to Production (Live)', 'jetpack-paypal-payments' ) }
+										</Button>
+										<br />
+										<span className="jetpack-paypal-wizard__env-hint">
+											{ __(
+												'Sandbox creates test buttons that do not process real payments.',
+												'jetpack-paypal-payments'
+											) }
+										</span>
+									</>
 								) }
 							</p>
 						</div>
@@ -792,13 +1089,13 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					{ /* Step 4: Success */ }
 					{ wizardStep === 'success' && (
 						<div className="jetpack-paypal-wizard__success">
-							<div className="jetpack-paypal-wizard__success-icon">
+							<div className="jetpack-paypal-wizard__success-icon" aria-hidden="true">
 								<span>&#10003;</span>
 							</div>
 							<h3>{ __( 'PayPal account connected!', 'jetpack-paypal-payments' ) }</h3>
 							<p>
 								{ __(
-									"You're ready to create payment buttons. Fill in your product details below.",
+									"You're ready to create payment buttons and links. Fill in your product details and we'll create both an embeddable PayPal button and a shareable payment link.",
 									'jetpack-paypal-payments'
 								) }
 							</p>
@@ -832,23 +1129,9 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		</BlockControls>
 	) : null;
 
-	// Inspector sidebar — always shown when connected.
+	// Inspector sidebar — connection info and admin actions only.
 	const inspectorControls = (
 		<InspectorControls>
-			<PanelBody title={ __( 'Button Settings', 'jetpack-paypal-payments' ) }>
-				<SelectControl
-					label={ __( 'Button Layout', 'jetpack-paypal-payments' ) }
-					value={ buttonType }
-					options={ BUTTON_TYPE_OPTIONS }
-					onChange={ value => setAttributes( { buttonType: value } ) }
-				/>
-				<TextControl
-					label={ __( 'Button Text', 'jetpack-paypal-payments' ) }
-					value={ buttonText || '' }
-					onChange={ value => setAttributes( { buttonText: value } ) }
-				/>
-			</PanelBody>
-
 			{ hasButton && (
 				<PanelBody
 					title={ __( 'PayPal Connection', 'jetpack-paypal-payments' ) }
@@ -860,7 +1143,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					<p>
 						{ __( 'Environment:', 'jetpack-paypal-payments' ) } <strong>{ environment }</strong>
 					</p>
-					<div style={ { display: 'flex', gap: '8px', marginTop: '12px' } }>
+					<div className="jetpack-paypal-payment-buttons__destructive-actions">
 						<Button
 							variant="secondary"
 							isDestructive
@@ -923,13 +1206,14 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					) }
 
 					<PayPalButtonPreview
-						buttonText={ buttonText }
-						buttonType={ buttonType }
 						productName={ productName }
 						price={ price }
 						currencyCode={ currencyCode }
 						productDescription={ productDescription }
 						paymentLink={ paymentLink }
+						variantsEnabled={ variantsEnabled }
+						variants={ variants }
+						imageUrl={ imageUrl }
 					/>
 				</div>
 			</div>
@@ -953,11 +1237,15 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					) }
 				</div>
 
-				<h3>
-					{ hasButton
-						? __( 'Edit PayPal Button', 'jetpack-paypal-payments' )
-						: __( 'Create PayPal Button', 'jetpack-paypal-payments' ) }
-				</h3>
+				<h3>{ hasButton ? labelEditHeading : labelCreateHeading }</h3>
+				{ ! hasButton && (
+					<p className="jetpack-paypal-payment-buttons__form-intro">
+						{ __(
+							'Use the button on this page, or share the link anywhere.',
+							'jetpack-paypal-payments'
+						) }
+					</p>
+				) }
 
 				{ error && (
 					<Notice status="error" isDismissible onDismiss={ () => setError( null ) }>
@@ -976,13 +1264,15 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					value={ productName || '' }
 					onChange={ value => setAttributes( { productName: value } ) }
 					onBlur={ () => markTouched( 'productName' ) }
+					disabled={ isCreating }
 					placeholder={ __( 'e.g., Premium Widget', 'jetpack-paypal-payments' ) }
 					help={
 						touchedFields.productName && validationErrors.productName
-							? undefined
+							? validationErrors.productName
 							: sprintf(
-									/* translators: %d: maximum number of characters allowed */
-									__( 'Max %d characters.', 'jetpack-paypal-payments' ),
+									/* translators: 1: current character count, 2: maximum allowed */
+									__( '%1$d / %2$d characters', 'jetpack-paypal-payments' ),
+									( productName || '' ).length,
 									MAX_NAME_LENGTH
 							  )
 					}
@@ -990,11 +1280,6 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 						touchedFields.productName && validationErrors.productName ? 'has-error' : undefined
 					}
 				/>
-				{ touchedFields.productName && validationErrors.productName && (
-					<p className="jetpack-paypal-payment-buttons__field-error">
-						{ validationErrors.productName }
-					</p>
-				) }
 
 				<div className="jetpack-paypal-payment-buttons__price-row">
 					<div>
@@ -1003,17 +1288,16 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 							value={ price || '' }
 							onChange={ value => setAttributes( { price: value } ) }
 							onBlur={ () => markTouched( 'price' ) }
+							disabled={ isCreating }
 							type="number"
 							min="0.01"
 							step="0.01"
 							placeholder="29.99"
+							help={
+								touchedFields.price && validationErrors.price ? validationErrors.price : undefined
+							}
 							className={ touchedFields.price && validationErrors.price ? 'has-error' : undefined }
 						/>
-						{ touchedFields.price && validationErrors.price && (
-							<p className="jetpack-paypal-payment-buttons__field-error">
-								{ validationErrors.price }
-							</p>
-						) }
 					</div>
 					<SelectControl
 						label={ __( 'Currency', 'jetpack-paypal-payments' ) }
@@ -1030,13 +1314,14 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					onBlur={ () => markTouched( 'productDescription' ) }
 					help={
 						touchedFields.productDescription && validationErrors.productDescription
-							? undefined
+							? validationErrors.productDescription
 							: sprintf(
-									/* translators: %d: maximum number of characters allowed */
+									/* translators: 1: current character count, 2: maximum allowed */
 									__(
-										'Shown to customers at checkout. Max %d characters.',
+										'Shown to customers at checkout. %1$d / %2$d characters',
 										'jetpack-paypal-payments'
 									),
+									( productDescription || '' ).length,
 									MAX_DESCRIPTION_LENGTH
 							  )
 					}
@@ -1046,19 +1331,294 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 							: undefined
 					}
 				/>
-				{ touchedFields.productDescription && validationErrors.productDescription && (
-					<p className="jetpack-paypal-payment-buttons__field-error">
-						{ validationErrors.productDescription }
+
+				<div className="jetpack-paypal-payment-buttons__image-field">
+					<p className="components-base-control__label">
+						{ __( 'Product Image (optional)', 'jetpack-paypal-payments' ) }
 					</p>
-				) }
+					{ imageUrl ? (
+						<div className="jetpack-paypal-payment-buttons__image-preview">
+							<img src={ imageUrl } alt={ productName || '' } />
+							<div className="jetpack-paypal-payment-buttons__image-actions">
+								<MediaUploadCheck>
+									<MediaUpload
+										onSelect={ media =>
+											setAttributes( { imageUrl: media.url, imageId: media.id } )
+										}
+										allowedTypes={ [ 'image' ] }
+										value={ imageId }
+										render={ ( { open } ) => (
+											<Button variant="secondary" onClick={ open } size="small">
+												{ __( 'Replace', 'jetpack-paypal-payments' ) }
+											</Button>
+										) }
+									/>
+								</MediaUploadCheck>
+								<Button
+									variant="link"
+									isDestructive
+									onClick={ () => setAttributes( { imageUrl: undefined, imageId: undefined } ) }
+									size="small"
+								>
+									{ __( 'Remove', 'jetpack-paypal-payments' ) }
+								</Button>
+							</div>
+						</div>
+					) : (
+						<MediaUploadCheck>
+							<MediaUpload
+								onSelect={ media => setAttributes( { imageUrl: media.url, imageId: media.id } ) }
+								allowedTypes={ [ 'image' ] }
+								value={ imageId }
+								render={ ( { open } ) => (
+									<Button
+										variant="secondary"
+										onClick={ open }
+										className="jetpack-paypal-payment-buttons__upload-button"
+									>
+										{ __( 'Upload Image', 'jetpack-paypal-payments' ) }
+									</Button>
+								) }
+							/>
+						</MediaUploadCheck>
+					) }
+				</div>
+
+				<div className="jetpack-paypal-payment-buttons__variants-section">
+					<VariantBuilder
+						enabled={ variantsEnabled }
+						variants={ variants }
+						currencyCode={ currencyCode || 'USD' }
+						onChange={ updates => setAttributes( updates ) }
+						disabled={ isCreating }
+					/>
+				</div>
 
 				<TextControl
 					label={ __( 'Return URL (optional)', 'jetpack-paypal-payments' ) }
 					value={ returnUrl || '' }
 					onChange={ value => setAttributes( { returnUrl: value } ) }
+					onBlur={ () => markTouched( 'returnUrl' ) }
 					type="url"
-					help={ __( 'Redirect customers here after payment.', 'jetpack-paypal-payments' ) }
+					disabled={ isCreating }
+					help={
+						touchedFields.returnUrl && returnUrl && ! /^https:\/\/.+/.test( returnUrl )
+							? __(
+									'Return URL must use HTTPS (e.g., https://example.com/thank-you).',
+									'jetpack-paypal-payments'
+							  )
+							: __( 'Redirect customers here after payment.', 'jetpack-paypal-payments' )
+					}
+					className={
+						touchedFields.returnUrl && returnUrl && ! /^https:\/\/.+/.test( returnUrl )
+							? 'has-error'
+							: undefined
+					}
 				/>
+
+				<div className="jetpack-paypal-payment-buttons__checkout-options">
+					<h4 className="jetpack-paypal-payment-buttons__section-heading">
+						{ __( 'Checkout Options', 'jetpack-paypal-payments' ) }
+					</h4>
+
+					{ /* WOOPTP-170: Adjustable Quantity */ }
+					<ToggleControl
+						label={ __( 'Allow customers to adjust quantity', 'jetpack-paypal-payments' ) }
+						help={ adjustableQuantity ? helpQtyOn : helpQtyOff }
+						checked={ adjustableQuantity }
+						onChange={ value => setAttributes( { adjustableQuantity: value } ) }
+						disabled={ isCreating }
+					/>
+					{ adjustableQuantity && (
+						<TextControl
+							label={ __( 'Maximum quantity', 'jetpack-paypal-payments' ) }
+							value={ maxQuantity || '' }
+							onChange={ value => setAttributes( { maxQuantity: parseInt( value, 10 ) || 10 } ) }
+							type="number"
+							min={ 2 }
+							max={ 999 }
+							disabled={ isCreating }
+							help={ __(
+								'Customers can select from 1 to this number.',
+								'jetpack-paypal-payments'
+							) }
+						/>
+					) }
+
+					{ /* WOOPTP-172: Tax Configuration */ }
+					<ToggleControl
+						label={ __( 'Collect tax', 'jetpack-paypal-payments' ) }
+						help={ taxEnabled ? helpTaxOn : helpTaxOff }
+						checked={ taxEnabled }
+						onChange={ value => setAttributes( { taxEnabled: value } ) }
+						disabled={ isCreating }
+					/>
+					{ taxEnabled && (
+						<div className="jetpack-paypal-payment-buttons__tax-config">
+							<SelectControl
+								label={ __( 'Tax type', 'jetpack-paypal-payments' ) }
+								value={ taxType || 'PERCENTAGE' }
+								options={ [
+									{
+										label: __( 'Fixed percentage', 'jetpack-paypal-payments' ),
+										value: 'PERCENTAGE',
+									},
+									{
+										label: __( 'Use PayPal profile settings', 'jetpack-paypal-payments' ),
+										value: 'PREFERENCE',
+									},
+								] }
+								onChange={ value => setAttributes( { taxType: value } ) }
+								disabled={ isCreating }
+							/>
+							<TextControl
+								label={ __( 'Tax name', 'jetpack-paypal-payments' ) }
+								value={ taxName || '' }
+								onChange={ value => setAttributes( { taxName: value } ) }
+								placeholder={ __( 'Sales Tax', 'jetpack-paypal-payments' ) }
+								disabled={ isCreating }
+							/>
+							{ taxType === 'PERCENTAGE' && (
+								<TextControl
+									label={ __( 'Tax rate (%)', 'jetpack-paypal-payments' ) }
+									value={ taxValue || '' }
+									onChange={ value => setAttributes( { taxValue: value } ) }
+									type="number"
+									min="0.01"
+									max="99.99"
+									step="0.01"
+									placeholder="8.25"
+									disabled={ isCreating }
+									help={ __( 'Percentage added to the product price.', 'jetpack-paypal-payments' ) }
+								/>
+							) }
+						</div>
+					) }
+
+					{ /* WOOPTP-171: Customer Notes */ }
+					<ToggleControl
+						label={ __( 'Custom checkout fields', 'jetpack-paypal-payments' ) }
+						help={
+							customerNotes?.length > 0
+								? sprintf(
+										/* translators: %d: number of custom fields */
+										__( '%d custom field(s) configured.', 'jetpack-paypal-payments' ),
+										customerNotes.length
+								  )
+								: __(
+										'Add fields for gift messages, personalization, etc.',
+										'jetpack-paypal-payments'
+								  )
+						}
+						checked={ customerNotes?.length > 0 }
+						onChange={ value => {
+							if ( value ) {
+								setAttributes( {
+									customerNotes: [ { label: '', required: false } ],
+								} );
+							} else {
+								setAttributes( { customerNotes: [] } );
+							}
+						} }
+						disabled={ isCreating }
+					/>
+					{ customerNotes?.length > 0 && (
+						<div className="jetpack-paypal-payment-buttons__customer-notes">
+							{ customerNotes.map( ( note, noteIndex ) => (
+								<div key={ noteIndex } className="jetpack-paypal-payment-buttons__customer-note">
+									<TextControl
+										label={ sprintf(
+											/* translators: %d: field number */
+											__( 'Field %d label', 'jetpack-paypal-payments' ),
+											noteIndex + 1
+										) }
+										value={ note.label || '' }
+										onChange={ value => {
+											const updated = [ ...customerNotes ];
+											updated[ noteIndex ] = {
+												...updated[ noteIndex ],
+												label: value,
+											};
+											setAttributes( { customerNotes: updated } );
+										} }
+										placeholder={ __( 'e.g., Gift Message', 'jetpack-paypal-payments' ) }
+										disabled={ isCreating }
+									/>
+									<div className="jetpack-paypal-payment-buttons__customer-note-controls">
+										<ToggleControl
+											label={ __( 'Required', 'jetpack-paypal-payments' ) }
+											checked={ note.required }
+											onChange={ value => {
+												const updated = [ ...customerNotes ];
+												updated[ noteIndex ] = {
+													...updated[ noteIndex ],
+													required: value,
+												};
+												setAttributes( { customerNotes: updated } );
+											} }
+											disabled={ isCreating }
+										/>
+										{ customerNotes.length > 1 && (
+											<Button
+												isSmall
+												isDestructive
+												variant="tertiary"
+												onClick={ () => {
+													const updated = customerNotes.filter( ( _, i ) => i !== noteIndex );
+													setAttributes( { customerNotes: updated } );
+												} }
+												disabled={ isCreating }
+												aria-label={ sprintf(
+													/* translators: %d: field number */
+													__( 'Remove field %d', 'jetpack-paypal-payments' ),
+													noteIndex + 1
+												) }
+											>
+												{ __( 'Remove', 'jetpack-paypal-payments' ) }
+											</Button>
+										) }
+									</div>
+								</div>
+							) ) }
+							{ customerNotes.length < 5 && (
+								<Button
+									isSmall
+									variant="secondary"
+									onClick={ () =>
+										setAttributes( {
+											customerNotes: [ ...customerNotes, { label: '', required: false } ],
+										} )
+									}
+									disabled={ isCreating }
+								>
+									{ __( 'Add field', 'jetpack-paypal-payments' ) }
+								</Button>
+							) }
+						</div>
+					) }
+				</div>
+
+				<div className="jetpack-paypal-payment-buttons__button-appearance">
+					<h4 className="jetpack-paypal-payment-buttons__section-heading">
+						{ __( 'Button Appearance', 'jetpack-paypal-payments' ) }
+					</h4>
+					<TextControl
+						label={ __( 'Button Text', 'jetpack-paypal-payments' ) }
+						value={ buttonText || '' }
+						onChange={ value => setAttributes( { buttonText: value } ) }
+						disabled={ isCreating }
+					/>
+					<ToggleControl
+						label={ __( 'Show QR code', 'jetpack-paypal-payments' ) }
+						help={ __(
+							'Display a QR code below the button for in-person sharing.',
+							'jetpack-paypal-payments'
+						) }
+						checked={ attributes.showQrCode !== false }
+						onChange={ value => setAttributes( { showQrCode: value } ) }
+						disabled={ isCreating }
+					/>
+				</div>
 
 				<div className="jetpack-paypal-payment-buttons__form-actions">
 					<Button

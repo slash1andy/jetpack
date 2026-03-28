@@ -3,7 +3,7 @@
 	"apiVersion": 3,
 	"name": "jetpack/paypal-payment-buttons",
 	"title": "PayPal Payment Buttons",
-	"description": "Accept payments via PayPal. Create a buy button directly in the editor — no code required.",
+	"description": "Accept payments via PayPal. Create a buy button directly in the editor \u2014 no code required.",
 	"keywords": [ "paypal", "payment", "buy", "sell", "commerce", "checkout" ],
 	"category": "earn",
 	"icon": "paypal",
@@ -42,14 +42,20 @@
 			"type": "string",
 			"default": ""
 		},
+		"imageUrl": {
+			"type": "string"
+		},
+		"imageId": {
+			"type": "number"
+		},
 		"buttonText": {
 			"type": "string",
-			"default": "Pay Now"
+			"default": "Buy Now With PayPal"
 		},
 		"buttonType": {
 			"type": "string",
 			"enum": [ "stacked", "single" ],
-			"default": "stacked"
+			"default": "single"
 		},
 		"scriptSrc": {
 			"type": "string",
@@ -62,6 +68,62 @@
 		"returnUrl": {
 			"type": "string",
 			"default": ""
+		},
+		"variantsEnabled": {
+			"type": "boolean",
+			"default": false
+		},
+		"variants": {
+			"type": "object",
+			"default": null
+		},
+		"adjustableQuantity": {
+			"type": "boolean",
+			"default": false
+		},
+		"maxQuantity": {
+			"type": "number",
+			"default": 10
+		},
+		"customerNotes": {
+			"type": "array",
+			"default": []
+		},
+		"taxEnabled": {
+			"type": "boolean",
+			"default": false
+		},
+		"taxType": {
+			"type": "string",
+			"default": "PERCENTAGE"
+		},
+		"taxName": {
+			"type": "string",
+			"default": "Sales Tax"
+		},
+		"taxValue": {
+			"type": "string",
+			"default": ""
+		},
+		"collectShippingAddress": {
+			"type": "boolean",
+			"default": false
+		},
+		"shippingEnabled": {
+			"type": "boolean",
+			"default": false
+		},
+		"shippingType": {
+			"type": "string",
+			"default": "FLAT"
+		},
+		"shippingValue": {
+			"type": "string",
+			"default": ""
+		},
+		"showQrCode": {
+			"type": "boolean",
+			"default": true
 		}
 	},
 	"editorScript": "file:../../dist/paypal-payment-buttons/editor.js",
