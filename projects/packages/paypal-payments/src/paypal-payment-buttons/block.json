@@ -124,6 +124,9 @@
 		"showQrCode": {
 			"type": "boolean",
 			"default": true
+		},
+		"wizardStep": {
+			"type": "string"
 		}
 	},
 	"editorScript": "file:../../dist/paypal-payment-buttons/editor.js",
