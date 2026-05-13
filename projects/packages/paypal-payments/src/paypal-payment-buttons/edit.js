@@ -22,6 +22,7 @@ import {
 	MediaUploadCheck,
 	useBlockProps,
 } from '@wordpress/block-editor';
+import metadata from './block.json';
 import {
 	Button,
 	Notice,
@@ -33,6 +34,8 @@ import {
 	ToggleControl,
 	ToolbarButton,
 	ToolbarGroup,
+	// eslint-disable-next-line @wordpress/no-unsafe-wp-apis -- Experimental API; stable ConfirmDialog not yet exported by @wordpress/components.
+	__experimentalConfirmDialog as ConfirmDialog,
 } from '@wordpress/components';
 import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
@@ -156,6 +159,10 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	const [ isCreating, setIsCreating ] = useState( false );
 	const [ error, setError ] = useState( null );
 	const [ successMessage, setSuccessMessage ] = useState( null );
+
+	// Confirmation dialog state for destructive actions.
+	const [ showDeleteConfirm, setShowDeleteConfirm ] = useState( false );
+	const [ showDisconnectConfirm, setShowDisconnectConfirm ] = useState( false );
 
 	// Edit/preview mode toggle. Start in preview if button already exists.
 	const [ isEditing, setIsEditing ] = useState( ! ( isApiManaged && resourceId && paymentLink ) );
@@ -476,19 +483,17 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 
 	/**
 	 * Handle PayPal disconnect with confirmation.
+	 * Triggers a ConfirmDialog — actual disconnect runs in executeDisconnect().
 	 */
 	const handleDisconnect = useCallback( () => {
-		if (
-			// eslint-disable-next-line no-alert -- Confirmation required for destructive action.
-			! window.confirm(
-				__(
-					'Disconnect your PayPal account? You will need to re-enter your credentials to create new buttons. Existing published buttons will continue to work.',
-					'jetpack-paypal-payments'
-				)
-			)
-		) {
-			return;
-		}
+		setShowDisconnectConfirm( true );
+	}, [] );
+
+	/**
+	 * Execute the PayPal disconnect after the user confirms.
+	 */
+	const executeDisconnect = useCallback( () => {
+		setShowDisconnectConfirm( false );
 
 		const doDisconnect = () => {
 			setIsConnected( false );
@@ -501,6 +506,12 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 				productName: '',
 				price: '',
 				productDescription: '',
+				imageUrl: undefined,
+				imageId: undefined,
+				returnUrl: '',
+				variantsEnabled: false,
+				variants: null,
+				currencyCode: 'USD',
 			} );
 			setSuccessMessage( __( 'PayPal account disconnected.', 'jetpack-paypal-payments' ) );
 		};
@@ -700,25 +711,21 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	}, [ resourceId, buildRequestData, paymentLink, setAttributes, isFormValid ] );
 
 	/**
-	 * Delete the PayPal payment button via the API with confirmation.
+	 * Request delete confirmation via ConfirmDialog.
+	 * Actual deletion runs in executeDeleteButton().
 	 */
 	const handleDeleteButton = useCallback( () => {
 		if ( ! resourceId ) {
 			return;
 		}
+		setShowDeleteConfirm( true );
+	}, [ resourceId ] );
 
-		if (
-			// eslint-disable-next-line no-alert -- Confirmation required for destructive action.
-			! window.confirm(
-				__(
-					'Delete this PayPal button? This permanently removes the payment resource from PayPal. Customers will no longer be able to pay using this button.',
-					'jetpack-paypal-payments'
-				)
-			)
-		) {
-			return;
-		}
-
+	/**
+	 * Execute the button deletion after the user confirms.
+	 */
+	const executeDeleteButton = useCallback( () => {
+		setShowDeleteConfirm( false );
 		setError( null );
 		setIsCreating( true );
 
@@ -1136,6 +1143,15 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					onClick={ () => setIsEditing( true ) }
 				/>
 			</ToolbarGroup>
+			<ToolbarGroup>
+				<ToolbarButton
+					icon="trash"
+					label={ __( 'Delete Payment Button', 'jetpack-paypal-payments' ) }
+					onClick={ handleDeleteButton }
+					disabled={ isCreating }
+					isDestructive
+				/>
+			</ToolbarGroup>
 		</BlockControls>
 	) : null;
 
@@ -1185,6 +1201,38 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		</InspectorControls>
 	);
 
+	// Shared confirmation dialogs — extracted so they render regardless of which return branch is active.
+	const confirmDialogs = (
+		<>
+			{ showDeleteConfirm && (
+				<ConfirmDialog
+					title={ __( 'Delete Payment Button', 'jetpack-paypal-payments' ) }
+					confirmButtonText={ __( 'Delete Permanently', 'jetpack-paypal-payments' ) }
+					onConfirm={ executeDeleteButton }
+					onCancel={ () => setShowDeleteConfirm( false ) }
+				>
+					{ __(
+						'This will permanently delete your payment button. Any links, QR codes, or embedded buttons using this payment will stop working and cannot be recovered.',
+						'jetpack-paypal-payments'
+					) }
+				</ConfirmDialog>
+			) }
+			{ showDisconnectConfirm && (
+				<ConfirmDialog
+					title={ __( 'Disconnect PayPal Account', 'jetpack-paypal-payments' ) }
+					confirmButtonText={ __( 'Disconnect', 'jetpack-paypal-payments' ) }
+					onConfirm={ executeDisconnect }
+					onCancel={ () => setShowDisconnectConfirm( false ) }
+				>
+					{ __(
+						'Disconnect your PayPal account? You will need to re-enter your credentials to create new buttons. Existing published buttons will continue to work.',
+						'jetpack-paypal-payments'
+					) }
+				</ConfirmDialog>
+			) }
+		</>
+	);
+
 	// Connected + has button + preview mode — show live button preview.
 	if ( hasButton && ! isEditing ) {
 		return (
@@ -1226,6 +1274,8 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 						imageUrl={ imageUrl }
 					/>
 				</div>
+
+				{ confirmDialogs }
 			</div>
 		);
 	}
@@ -1642,19 +1692,48 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 						{ ! isCreating && ! hasButton && __( 'Create Button', 'jetpack-paypal-payments' ) }
 					</Button>
 
-					{ hasButton && (
-						<Button
-							variant="tertiary"
-							onClick={ () => {
+					<Button
+						variant="tertiary"
+						onClick={ () => {
+							if ( hasButton ) {
+								// Return to preview — discard unsaved edits.
 								setIsEditing( false );
 								setTouchedFields( {} );
-							} }
-						>
-							{ __( 'Cancel', 'jetpack-paypal-payments' ) }
-						</Button>
-					) }
+							} else {
+								// No saved button yet — reset form fields so merchant can
+								// remove the block if they want.
+								setAttributes( {
+									productName: metadata.attributes.productName.default,
+									price: metadata.attributes.price.default,
+									currencyCode: metadata.attributes.currencyCode.default,
+									productDescription: metadata.attributes.productDescription.default,
+									imageUrl: undefined,
+									imageId: undefined,
+									returnUrl: metadata.attributes.returnUrl.default,
+									variantsEnabled: metadata.attributes.variantsEnabled.default,
+									variants: undefined,
+									adjustableQuantity: metadata.attributes.adjustableQuantity.default,
+									maxQuantity: metadata.attributes.maxQuantity.default,
+									customerNotes: metadata.attributes.customerNotes.default,
+									taxEnabled: metadata.attributes.taxEnabled.default,
+									taxType: metadata.attributes.taxType.default,
+									taxName: metadata.attributes.taxName.default,
+									taxValue: metadata.attributes.taxValue.default,
+									buttonText: metadata.attributes.buttonText.default,
+									showQrCode: metadata.attributes.showQrCode.default,
+								} );
+								setTouchedFields( {} );
+								setError( null );
+							}
+						} }
+						disabled={ isCreating }
+					>
+						{ __( 'Cancel', 'jetpack-paypal-payments' ) }
+					</Button>
 				</div>
 			</div>
+
+			{ confirmDialogs }
 		</div>
 	);
 }
