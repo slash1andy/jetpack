@@ -47,7 +47,6 @@ import {
 } from './validation';
 import VariantBuilder, { validateVariants } from './variant-builder';
 
-
 /**
  * Supported currencies for the currency selector.
  * Matches PayPal_Attribute_Mapper::SUPPORTED_CURRENCIES on the server.
@@ -125,6 +124,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		taxType,
 		taxName,
 		taxValue,
+		wizardStep: savedWizardStep,
 	} = attributes;
 
 	const blockProps = useBlockProps();
@@ -181,11 +181,21 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	}
 
 	// Wizard step state: 'welcome' | 'dashboard' | 'credentials' | 'success'
-	// Persisted in localStorage so navigating away and back doesn't reset the wizard.
+	// Persisted in both block attributes and localStorage so navigating away and
+	// back (or refreshing the editor) restores the merchant's position in the wizard.
+	// Block attributes take priority: they survive editor reloads without needing
+	// localStorage access. localStorage remains as a fallback for older saved blocks
+	// that predate the wizardStep attribute.
+	const VALID_WIZARD_STEPS = [ 'welcome', 'dashboard', 'credentials', 'success' ];
 	const [ wizardStep, setWizardStep ] = useState( () => {
+		// 1. Prefer block attribute (survives page reload, works in iframes/sandboxes).
+		if ( savedWizardStep && VALID_WIZARD_STEPS.includes( savedWizardStep ) ) {
+			return savedWizardStep;
+		}
+		// 2. Fall back to localStorage (preserves state for blocks saved before this change).
 		try {
 			const saved = window.localStorage.getItem( 'jetpack-paypal-wizard-step' );
-			if ( saved && [ 'welcome', 'dashboard', 'credentials', 'success' ].includes( saved ) ) {
+			if ( saved && VALID_WIZARD_STEPS.includes( saved ) ) {
 				return saved;
 			}
 		} catch {
@@ -195,10 +205,13 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	} );
 	const [ showSecretField, setShowSecretField ] = useState( false );
 
-	// Persist wizard step changes to localStorage.
+	// Persist wizard step changes to localStorage and block attributes.
+	// Both stores are cleared when the wizard completes (success) or the user
+	// is already connected, so a stale step can't trap a future "create another" flow.
 	useEffect( () => {
+		const isTerminalStep = wizardStep === 'success' || isConnected;
 		try {
-			if ( wizardStep === 'success' || isConnected ) {
+			if ( isTerminalStep ) {
 				window.localStorage.removeItem( 'jetpack-paypal-wizard-step' );
 			} else {
 				window.localStorage.setItem( 'jetpack-paypal-wizard-step', wizardStep );
@@ -206,7 +219,11 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		} catch {
 			// localStorage unavailable — ignore.
 		}
-	}, [ wizardStep, isConnected ] );
+		// Mirror to block attributes so the step survives editor page reloads.
+		// Storing undefined removes the attribute from the serialised block markup,
+		// keeping it absent on completed/connected blocks (no stale wizard state).
+		setAttributes( { wizardStep: isTerminalStep ? undefined : wizardStep } );
+	}, [ wizardStep, isConnected, setAttributes ] );
 
 	// Inline validation state — track which fields have been touched.
 	const [ touchedFields, setTouchedFields ] = useState( {} );

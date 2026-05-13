@@ -1,0 +1,4 @@
+Significance: minor
+Type: added
+
+PayPal Payment Buttons: Persist wizard step in block attributes so in-progress connection setup is not lost on editor reload (WOOPTP-392 partial).
