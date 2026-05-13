@@ -228,7 +228,8 @@ Delete a payment resource. Returns success even if already deleted on PayPal (40
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `isApiManaged` | boolean | `false` | Whether this block uses the V2 API flow |
-| `buttonText` | string | `Buy Now` | Text shown on the theme-native button (wp-element-button class) |
+| `buttonType` | string | `stacked` | `stacked` (PayPal + Debit/Credit) or `inline` (PayPal only) |
+| `buttonText` | string | `Pay Now` | Text shown next to the PayPal logo on the button |
 | `resourceId` | string | — | PayPal resource ID (`PLB-...`) |
 | `paymentLink` | string | — | PayPal payment URL |
 | `productName` | string | — | Product name |
