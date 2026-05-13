@@ -25,6 +25,7 @@ import {
 import metadata from './block.json';
 import {
 	Button,
+	ButtonGroup,
 	Notice,
 	PanelBody,
 	SelectControl,
@@ -97,6 +98,60 @@ const VALID_CURRENCY_CODES = new Set( SUPPORTED_CURRENCIES.map( c => c.value ) )
 const API_BASE = '/jetpack/v4/paypal';
 
 /**
+ * Format options for the format switcher.
+ */
+const FORMAT_OPTIONS = [
+	{ value: 'BUTTON', label: __( 'Button', 'jetpack-paypal-payments' ) },
+	{ value: 'LINK', label: __( 'Link', 'jetpack-paypal-payments' ) },
+	{ value: 'QR', label: __( 'QR Code', 'jetpack-paypal-payments' ) },
+];
+
+/**
+ * Help text shown below the format switcher, keyed by format value.
+ */
+const FORMAT_HELP = {
+	BUTTON: __( 'Embed a clickable PayPal button on your page.', 'jetpack-paypal-payments' ),
+	LINK: __( 'Display a URL link that opens PayPal checkout.', 'jetpack-paypal-payments' ),
+	QR: __( 'Show a scannable QR code for print or digital use.', 'jetpack-paypal-payments' ),
+};
+
+/**
+ * Format switcher component — shared between the creation form and InspectorControls.
+ *
+ * @param {object}   props          - Component props.
+ * @param {string}   props.value    - Current format value ('BUTTON' | 'LINK' | 'QR').
+ * @param {Function} props.onChange - Callback when format changes.
+ * @param {boolean}  props.disabled - Whether the switcher is disabled.
+ * @return {Element} The format switcher UI.
+ */
+function FormatSwitcher( { value, onChange, disabled } ) {
+	const activeValue = value || 'BUTTON';
+	return (
+		<div className="jetpack-paypal-payment-buttons__format-switcher">
+			<p className="components-base-control__label">
+				{ __( 'Display Format', 'jetpack-paypal-payments' ) }
+			</p>
+			<ButtonGroup>
+				{ FORMAT_OPTIONS.map( option => (
+					<Button
+						key={ option.value }
+						variant={ activeValue === option.value ? 'primary' : 'secondary' }
+						onClick={ () => onChange( option.value ) }
+						disabled={ disabled }
+						aria-pressed={ activeValue === option.value }
+					>
+						{ option.label }
+					</Button>
+				) ) }
+			</ButtonGroup>
+			<p className="jetpack-paypal-payment-buttons__format-help">
+				{ FORMAT_HELP[ activeValue ] }
+			</p>
+		</div>
+	);
+}
+
+/**
  * PayPal Payment Buttons edit component.
  *
  * @param {object}   props               - Block props.
@@ -106,6 +161,7 @@ const API_BASE = '/jetpack/v4/paypal';
  */
 export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } ) {
 	const {
+		colorScheme,
 		isApiManaged,
 		scriptSrc,
 		hostedButtonId,
@@ -128,7 +184,11 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		taxType,
 		taxName,
 		taxValue,
+		format,
 	} = attributes;
+
+	// Normalize — old blocks without the attribute default to BUTTON.
+	const activeFormat = format || 'BUTTON';
 
 	const blockProps = useBlockProps();
 
@@ -771,7 +831,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	// Loading state while checking connection.
 	if ( connectionLoading ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorScheme || 'auto' }>
 				<div className="jetpack-paypal-payment-buttons__loading">
 					<Spinner />
 					<p>{ __( 'Checking PayPal connection…', 'jetpack-paypal-payments' ) }</p>
@@ -783,7 +843,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	// Legacy paste-code block — render as-is without the new UI.
 	if ( ! isApiManaged && ( scriptSrc || hostedButtonId ) ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorScheme || 'auto' }>
 				<div className="jetpack-paypal-payment-buttons__legacy">
 					<p>
 						{ __(
@@ -869,7 +929,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 	// Skip the wizard if the block already has a saved button (e.g. demo posts in Playground).
 	if ( ! isConnected && ! hasButton ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorScheme || 'auto' }>
 				<div className="jetpack-paypal-payment-buttons__connect">
 					{ /* Step indicator */ }
 					{ wizardStep !== 'welcome' && wizardStep !== 'success' && (
@@ -1155,9 +1215,61 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		</BlockControls>
 	) : null;
 
-	// Inspector sidebar — connection info and admin actions only.
+	// Inspector sidebar — format switcher, Style preset, and connection info.
 	const inspectorControls = (
 		<InspectorControls>
+			{ /* Style preset: Light / Auto / Dark — overrides the OS/theme auto-detect */ }
+			<PanelBody title={ __( 'Style', 'jetpack-paypal-payments' ) } initialOpen={ true }>
+				<p className="jetpack-paypal-payment-buttons__scheme-label">
+					{ __(
+						'Choose how the button adapts to your site theme. "Auto" follows the visitor\'s OS preference.',
+						'jetpack-paypal-payments'
+					) }
+				</p>
+				<ButtonGroup className="jetpack-paypal-payment-buttons__scheme-toggle">
+					<Button
+						variant={ colorScheme === 'light' ? 'primary' : 'secondary' }
+						aria-pressed={ colorScheme === 'light' }
+						onClick={ () => setAttributes( { colorScheme: 'light' } ) }
+					>
+						{ __( 'Light', 'jetpack-paypal-payments' ) }
+					</Button>
+					<Button
+						variant={ colorScheme === 'auto' || ! colorScheme ? 'primary' : 'secondary' }
+						aria-pressed={ colorScheme === 'auto' || ! colorScheme }
+						onClick={ () => setAttributes( { colorScheme: 'auto' } ) }
+					>
+						{ __( 'Auto', 'jetpack-paypal-payments' ) }
+					</Button>
+					<Button
+						variant={ colorScheme === 'dark' ? 'primary' : 'secondary' }
+						aria-pressed={ colorScheme === 'dark' }
+						onClick={ () => setAttributes( { colorScheme: 'dark' } ) }
+					>
+						{ __( 'Dark', 'jetpack-paypal-payments' ) }
+					</Button>
+				</ButtonGroup>
+				<p className="jetpack-paypal-payment-buttons__scheme-hint">
+					{ __(
+						'For advanced styling, target .wp-block-jetpack-paypal-payment-buttons or use data-color-scheme="light|dark|auto" in custom CSS.',
+						'jetpack-paypal-payments'
+					) }
+				</p>
+			</PanelBody>
+
+			{ hasButton && (
+				<PanelBody
+					title={ __( 'Display Format', 'jetpack-paypal-payments' ) }
+					initialOpen={ true }
+				>
+					<FormatSwitcher
+						value={ activeFormat }
+						onChange={ value => setAttributes( { format: value } ) }
+						disabled={ isCreating }
+					/>
+				</PanelBody>
+			) }
+
 			{ hasButton && (
 				<PanelBody
 					title={ __( 'PayPal Connection', 'jetpack-paypal-payments' ) }
@@ -1233,10 +1345,13 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 		</>
 	);
 
+	const formatLabel =
+		FORMAT_OPTIONS.find( o => o.value === activeFormat )?.label || activeFormat;
+
 	// Connected + has button + preview mode — show live button preview.
 	if ( hasButton && ! isEditing ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorScheme || 'auto' }>
 				{ toolbarControls }
 				{ inspectorControls }
 
@@ -1244,6 +1359,13 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					<div className="jetpack-paypal-payment-buttons__preview-status">
 						<span className="jetpack-paypal-payment-buttons__status-dot jetpack-paypal-payment-buttons__status-dot--connected" />
 						{ __( 'PayPal Connected', 'jetpack-paypal-payments' ) }
+						<span className="jetpack-paypal-payment-buttons__format-badge">
+							{ sprintf(
+								/* translators: %s: format label (Button, Link, or QR Code) */
+								__( 'Format: %s', 'jetpack-paypal-payments' ),
+								formatLabel
+							) }
+						</span>
 						{ environment === 'sandbox' && (
 							<span className="jetpack-paypal-payment-buttons__sandbox-badge">
 								{ __( 'Sandbox', 'jetpack-paypal-payments' ) }
@@ -1282,7 +1404,7 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 
 	// Connected — edit mode (either creating new or editing existing).
 	return (
-		<div { ...blockProps }>
+		<div { ...blockProps } data-color-scheme={ colorScheme || 'auto' }>
 			{ toolbarControls }
 			{ inspectorControls }
 
@@ -1680,6 +1802,17 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 					/>
 				</div>
 
+				<div className="jetpack-paypal-payment-buttons__format-section">
+					<h4 className="jetpack-paypal-payment-buttons__section-heading">
+						{ __( 'Display Format', 'jetpack-paypal-payments' ) }
+					</h4>
+					<FormatSwitcher
+						value={ activeFormat }
+						onChange={ value => setAttributes( { format: value } ) }
+						disabled={ isCreating }
+					/>
+				</div>
+
 				<div className="jetpack-paypal-payment-buttons__form-actions">
 					<Button
 						variant="primary"
@@ -1688,8 +1821,12 @@ export default function PayPalPaymentButtonsEdit( { attributes, setAttributes } 
 						disabled={ isCreating || ! isFormValid }
 					>
 						{ isCreating && __( 'Saving…', 'jetpack-paypal-payments' ) }
-						{ ! isCreating && hasButton && __( 'Update Button', 'jetpack-paypal-payments' ) }
-						{ ! isCreating && ! hasButton && __( 'Create Button', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && hasButton && activeFormat === 'LINK' && __( 'Update Link', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && hasButton && activeFormat === 'QR' && __( 'Update QR Code', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && hasButton && activeFormat === 'BUTTON' && __( 'Update Button', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && ! hasButton && activeFormat === 'LINK' && __( 'Create Link', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && ! hasButton && activeFormat === 'QR' && __( 'Create QR Code', 'jetpack-paypal-payments' ) }
+						{ ! isCreating && ! hasButton && activeFormat === 'BUTTON' && __( 'Create Button', 'jetpack-paypal-payments' ) }
 					</Button>
 
 					<Button

@@ -27,6 +27,7 @@ import PayPalLogo from './paypal-logo';
  */
 export default function PayPalPaymentButtonsSave( { attributes } ) {
 	const {
+		colorScheme,
 		isApiManaged,
 		buttonType,
 		scriptSrc,
@@ -41,10 +42,17 @@ export default function PayPalPaymentButtonsSave( { attributes } ) {
 
 	const blockProps = useBlockProps.save();
 
+	// Render data-color-scheme only when explicitly set to light or dark.
+	// Omitting the attribute for 'auto' and undefined keeps existing serialized HTML
+	// identical to what was stored before this attribute existed — preventing
+	// Gutenberg block validation failures on posts saved pre-WOOPTP-390.
+	const colorSchemeAttr =
+		colorScheme === 'light' || colorScheme === 'dark' ? colorScheme : undefined;
+
 	// API-managed V2 block — render styled button linking to PayPal payment URL.
 	if ( isApiManaged && paymentLink ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorSchemeAttr }>
 				<div className="jetpack-paypal-button">
 					{ /* Product image */ }
 					{ imageUrl && (
@@ -107,7 +115,7 @@ export default function PayPalPaymentButtonsSave( { attributes } ) {
 	// HTML without them.
 	if ( scriptSrc && hostedButtonId ) {
 		return (
-			<div { ...blockProps }>
+			<div { ...blockProps } data-color-scheme={ colorSchemeAttr }>
 				<div
 					className={ `jetpack-paypal-button jetpack-paypal-button--${ buttonType }` }
 					id={ hostedButtonId }
@@ -117,5 +125,5 @@ export default function PayPalPaymentButtonsSave( { attributes } ) {
 	}
 
 	// Fallback — empty block (should not normally occur).
-	return <div { ...blockProps } />;
+	return <div { ...blockProps } data-color-scheme={ colorSchemeAttr } />;
 }
