@@ -13,7 +13,7 @@
 namespace Automattic\Jetpack\PaypalPayments;
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit( 0 );
 }
 
 use WP_Error;

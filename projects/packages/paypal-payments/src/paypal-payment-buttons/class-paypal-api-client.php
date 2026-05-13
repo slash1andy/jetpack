@@ -22,7 +22,7 @@
 namespace Automattic\Jetpack\PaypalPayments;
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit( 0 );
 }
 
 /**

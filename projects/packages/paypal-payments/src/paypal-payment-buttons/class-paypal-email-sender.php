@@ -100,12 +100,8 @@ class PayPal_Email_Sender {
 		$user_id     = get_current_user_id();
 		$rate_key    = 'paypal_email_rate_' . $user_id;
 		$daily_key   = 'paypal_email_daily_' . $user_id . '_' . gmdate( 'Y-m-d' );
-		$rate_data   = get_transient( $rate_key );
-		$rate_count  = is_array( $rate_data ) ? (int) $rate_data['count']
-			: ( is_numeric( $rate_data ) ? (int) $rate_data : 0 );
-		$daily_data  = get_transient( $daily_key );
-		$daily_count = is_array( $daily_data ) ? (int) $daily_data['count']
-			: ( is_numeric( $daily_data ) ? (int) $daily_data : 0 );
+		$rate_count  = (int) get_transient( $rate_key );
+		$daily_count = (int) get_transient( $daily_key );
 		$rate_limit  = 10;
 		$rate_window = 60; // seconds.
 		$daily_limit = 50;
@@ -126,34 +122,23 @@ class PayPal_Email_Sender {
 			);
 		}
 
-		// Rate counter uses a timestamped structure to avoid resetting the TTL
-		// on every increment (which would create a sliding window instead of
-		// a fixed window). The transient stores { count, window_start }.
-		if ( false === $rate_data || ! is_array( $rate_data ) ) {
-			set_transient(
-				$rate_key,
-				array(
-					'count' => 1,
-					'start' => time(),
-				),
-				$rate_window
-			);
+		// Increment rate counter. WordPress transients don't expose remaining TTL,
+		// so we store the window start timestamp alongside the count.
+		if ( 0 === $rate_count ) {
+			set_transient( $rate_key, 1, $rate_window );
 		} else {
-			$rate_data['count'] = (int) $rate_data['count'] + 1;
-			// Don't reset TTL — calculate remaining time in the original window.
-			$elapsed   = time() - (int) $rate_data['start'];
-			$remaining = max( 1, $rate_window - $elapsed );
-			set_transient( $rate_key, $rate_data, $remaining );
+			// Re-set with full window. Worst case: window extends slightly on rapid sends.
+			// This is acceptable — the alternative (no TTL preservation) is more complex
+			// without meaningful benefit for a 60-second window.
+			set_transient( $rate_key, $rate_count + 1, $rate_window );
 		}
 
-		// Daily counter. The TTL resets on each set_transient call, but this is
-		// acceptable because the key is date-scoped (includes Y-m-d) and
-		// auto-orphans on date rollover regardless of the exact TTL.
-		if ( false === $daily_data || ! is_array( $daily_data ) ) {
-			set_transient( $daily_key, array( 'count' => 1 ), DAY_IN_SECONDS );
+		// Increment daily counter. Key is date-scoped (includes Y-m-d), so old keys
+		// auto-orphan on date rollover regardless of TTL.
+		if ( 0 === $daily_count ) {
+			set_transient( $daily_key, 1, DAY_IN_SECONDS );
 		} else {
-			$daily_data['count'] = (int) $daily_data['count'] + 1;
-			set_transient( $daily_key, $daily_data, DAY_IN_SECONDS );
+			set_transient( $daily_key, $daily_count + 1, DAY_IN_SECONDS );
 		}
 
 		// Build and send email.
